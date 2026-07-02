@@ -1,0 +1,13 @@
+# local postgres cluster (dev/CI runner)
+.pglocal/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# env
+.env
