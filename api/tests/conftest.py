@@ -23,7 +23,7 @@ COA = [
     ("1510", "Accum. Depreciation", "contra", "credit"),
     ("2000", "Accounts Payable", "liability", "credit"),
     ("2100", "Payroll Liabilities", "liability", "credit"),
-    ("2200", "Sales Tax Payable", "tax", "credit"),
+    ("2200", "Sales Tax Payable", "liability", "credit"),   # sensitive (see SENSITIVE_CODES)
     ("3000", "Owner's Equity", "equity", "credit"),
     ("4000", "Service Revenue", "revenue", "credit"),
     ("4100", "Install Revenue", "revenue", "credit"),
@@ -37,6 +37,14 @@ COA = [
     ("6500", "Depreciation Expense", "expense", "debit"),
     ("6600", "Meals", "expense", "debit"),
 ]
+
+# Accounts that carry policy sensitivity (tax accounts; equity is sensitive by type).
+SENSITIVE_CODES = {"2200"}
+
+
+def load_coa(ledger, org):
+    for code, name, atype, nb in COA:
+        ledger.add_account(org, code, name, atype, nb, is_sensitive=(code in SENSITIVE_CODES))
 
 
 @pytest.fixture(scope="session")
@@ -71,8 +79,7 @@ def org(service) -> str:
 @pytest.fixture
 def seeded_org(service, org) -> str:
     """Fresh org with the full chart of accounts loaded."""
-    for code, name, atype, nb in COA:
-        service.add_account(org, code, name, atype, nb)
+    load_coa(service, org)
     return org
 
 
@@ -102,8 +109,7 @@ def policy(app_url, ai_url):
 def porg(policy) -> str:
     """Fresh org with the full chart of accounts, wired to the policy service."""
     org = policy.ledger.ensure_org(f"ptest-{uuid.uuid4()}")
-    for code, name, atype, nb in COA:
-        policy.ledger.add_account(org, code, name, atype, nb)
+    load_coa(policy.ledger, org)
     return org
 
 
@@ -124,5 +130,6 @@ def api_org(client):
     org = client.post("/orgs", json={"name": f"api-{uuid.uuid4()}"}).json()["org_id"]
     for code, name, atype, nb in COA:
         client.post(f"/orgs/{org}/accounts",
-                    json={"code": code, "name": name, "account_type": atype, "normal_balance": nb})
+                    json={"code": code, "name": name, "account_type": atype,
+                          "normal_balance": nb, "is_sensitive": code in SENSITIVE_CODES})
     return org

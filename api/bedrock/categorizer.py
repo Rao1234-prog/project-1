@@ -155,22 +155,27 @@ class Categorizer:
             model_id = "pattern-memory"
             raw = json.dumps({"account_code": account_code, "confidence": confidence,
                               "source": source_layer})
-            prompt_hash = None
+            features = {"vendor": vendor, "description": description,
+                        "layer": source_layer, "matched_account": account_code}
         else:
             # --- LLM fallback (novel vendor). System fixes pattern_match=novel. ---
             pattern_match = "novel"
             system, user = self._build_prompt(coa, vendor, description)
-            prompt_hash = hashlib.sha256((system + "\x1f" + user).encode()).hexdigest()
+            features = {"vendor": vendor, "description": description, "coa": sorted(valid_codes)}
             account_code, confidence, rationale, source_layer, model_id, raw = \
                 self._run_llm(system, user, valid_codes)
 
+        # prompt_hash is NOT NULL for every proposal (spec replayability): hash of
+        # the inputs the categorizer acted on, LLM or not.
+        prompt_hash = hashlib.sha256(json.dumps(features, sort_keys=True).encode()).hexdigest()
         account_type = coa[account_code]["account_type"] if account_code in coa else "expense"
 
         proposal_id = self._insert_proposal(
             org, txn_id, account_code=account_code, account_type=account_type,
             rationale=rationale, confidence=confidence, pattern_match=pattern_match,
             model_id=model_id, source_layer=source_layer,
-            prompt_hash=prompt_hash, raw_response=raw, content_sha256=content_sha256)
+            prompt_hash=prompt_hash, raw_response=raw, content_sha256=content_sha256,
+            features_snapshot=features)
 
         return CategorizerResult(proposal_id, account_code, account_type, confidence,
                                  rationale, pattern_match, source_layer, model_id, cached=False)
@@ -222,16 +227,17 @@ class Categorizer:
 
     def _insert_proposal(self, org, txn_id, *, account_code, account_type, rationale,
                          confidence, pattern_match, model_id, source_layer,
-                         prompt_hash, raw_response, content_sha256) -> str:
+                         prompt_hash, raw_response, content_sha256, features_snapshot) -> str:
+        from psycopg.types.json import Jsonb
         with self.ai_pool.connection() as conn:
             row = conn.execute(
                 """INSERT INTO proposals
                      (org_id, txn_id, account_code, account_type, rationale, confidence,
                       pattern_match, model_id, source_layer, prompt_template_version,
-                      prompt_hash, raw_response, content_sha256)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING proposal_id""",
+                      prompt_hash, raw_response, content_sha256, features_snapshot)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING proposal_id""",
                 (org, txn_id, account_code, account_type, rationale, confidence,
                  pattern_match, model_id, source_layer, PROMPT_TEMPLATE_VERSION,
-                 prompt_hash, raw_response, content_sha256),
+                 prompt_hash, raw_response, content_sha256, Jsonb(features_snapshot)),
             ).fetchone()
             return str(row[0])

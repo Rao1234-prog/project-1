@@ -237,3 +237,30 @@ Runs the full pytest suite and prints the gate summary:
 - **trial balance zero** after the seeded run
 - **chain verification passes**
 - **direct SQL tampering is detected**
+
+## Spec conformance & deviations
+
+After building all four phases, the implementation was cross-checked against
+Sections 1 (schema) and 2 (policy logic) of `pre-code-deliverables.md`. The
+adjudicated conformance changes (90-day windowed error rate + org-global
+fallback, the 6-type account enum with an explicit `accounts.is_sensitive`
+flag, the `related_parties` seam, `audit_log` row-hash chaining, `prompt_hash
+NOT NULL` + `features_snapshot`, and `soft_close`) landed in
+`db/sql/08_conformance.sql` and are covered by `api/tests/test_conformance.py`.
+
+A small number of deviations from the spec were **kept on purpose** — each is
+recorded with its rationale in [`DEVIATIONS.md`](DEVIATIONS.md). The most
+behaviorally significant:
+
+- **Auto-post share cap is checked in projected form** — `(auto+1)/total <=
+  0.90` rather than the spec's `monthly_auto_share < cap`. This is strictly more
+  conservative (it accounts for the post about to happen), and **conservative
+  wins ties** in this system: a marginal transaction goes to a human, never
+  auto-posts on the boundary.
+
+Larger conformance items surfaced by the cross-check but deliberately deferred
+(schema-shape changes: `journal_entries.period_id` FK, the full
+`reconciliations` shape, `raw_transactions` one-document-many-lines, UUID PKs;
+plus the remaining adversarial/red-team checks) are tracked in
+[`docs/deferred-conformance.md`](docs/deferred-conformance.md) with spec
+references and size estimates.

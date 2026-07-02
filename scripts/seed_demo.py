@@ -34,7 +34,7 @@ COA = [
     ("1500", "Equipment", "asset", "debit"),
     ("1510", "Accum. depreciation", "contra", "credit"),
     ("2000", "Accounts payable", "liability", "credit"),
-    ("2200", "Sales tax payable", "tax", "credit"),
+    ("2200", "Sales tax payable", "liability", "credit"),   # sensitive (tax)
     ("3000", "Owner's equity", "equity", "credit"),
     ("4000", "Service revenue", "revenue", "credit"),
     ("4100", "Install revenue", "revenue", "credit"),
@@ -145,7 +145,7 @@ QUEUE = [
     dict(txn="q2", date="2026-06-20", vendor="Texas Comptroller", amt=121240, dir="outflow", doc="tx",
          decision="controller_queue", lane="controller_queue",
          reason="Touches a tax account — never a bookkeeper-level decision",
-         proposal=("2200","tax",0.65,"novel","Webfile descriptor pattern → likely sales tax remittance, reduces liability")),
+         proposal=("2200","liability",0.65,"novel","Webfile descriptor pattern → likely sales tax remittance, reduces liability")),
     dict(txn="q3", date="2026-06-23", vendor="Stripe payout — install draw #3", amt=1450000, dir="inflow", doc="dep",
          decision="hard_stop", lane="hard_stop",
          reason="Amount >= $10,000 — human review required, customer notified",
@@ -172,7 +172,7 @@ def already_seeded(policy, org) -> bool:
 def reset_org(org_name: str) -> None:
     admin = os.environ["BEDROCK_ADMIN_URL"]
     with psycopg.connect(admin, autocommit=True) as conn:
-        row = conn.execute("SELECT org_id FROM orgs WHERE name=%s", (org_name,)).fetchone()
+        row = conn.execute("SELECT org_id FROM orgs WHERE legal_name=%s", (org_name,)).fetchone()
         if not row:
             return
         org = row[0]
@@ -259,7 +259,7 @@ def main() -> None:
     org = policy.ledger.ensure_org(ORG_NAME)
     for code, name, atype, nb in COA:
         try:
-            policy.ledger.add_account(org, code, name, atype, nb)
+            policy.ledger.add_account(org, code, name, atype, nb, is_sensitive=(code == "2200"))
         except Exception:
             pass
 

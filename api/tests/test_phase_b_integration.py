@@ -3,6 +3,8 @@ review authorization, persistent state across restart, and determinism.
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from bedrock.policy_service import DocumentIn, PolicyService, ProposalIn, Unauthorized
@@ -91,8 +93,13 @@ def test_correction_updates_error_rate_and_tightens(policy, porg):
     assert info["error_rate"] == pytest.approx(1.0)
     assert info["effective_thresholds"]["auto_post_min_confidence"] == 1.01  # tightened
 
-    # tightening only activates after >=10 decisions: a fresh account is untightened
-    assert policy.account_error(org, "6999")["effective_thresholds"]["auto_post_min_confidence"] == 0.97
+    # org-global fallback (spec): a fresh account in an org whose *global* rate is
+    # bad inherits the caution — 6999 has no history but the org-global rate is 1.0.
+    assert policy.account_error(org, "6999")["effective_thresholds"]["auto_post_min_confidence"] == 1.01
+
+    # min-sample gate: in a clean org (<10 total decisions) nothing tightens.
+    fresh = policy.ledger.ensure_org(f"clean-{uuid.uuid4()}")
+    assert policy.account_error(fresh, "6100")["effective_thresholds"]["auto_post_min_confidence"] == 0.97
 
 
 # --- requirement 4: state survives restart ----------------------------------
@@ -129,8 +136,8 @@ def test_same_sequence_two_orgs_identical_decisions(policy):
         for code, name, atype, nb in [("1000", "Cash", "asset", "debit"),
                                       ("6100", "Fuel", "expense", "debit"),
                                       ("5000", "Parts", "expense", "debit"),
-                                      ("2200", "Tax", "tax", "credit")]:
-            L.add_account(org, code, name, atype, nb)
+                                      ("2200", "Tax", "liability", "credit")]:
+            L.add_account(org, code, name, atype, nb, is_sensitive=(code == "2200"))
         out = []
         for day, amt, cp, code, atype, pat, conf in seq:
             r = _ingest(policy, org, day=day, amount=amt, cp=cp, code=code,

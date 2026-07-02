@@ -100,8 +100,10 @@ def test_ai_role_cannot_write_ledger(service, seeded_org):
                 """INSERT INTO journal_entries
                      (org_id, entry_date, entry_type, memo, posted_by_policy)
                    VALUES (%s,'2026-05-01','standard','x','ai')""", (org,))
-        # but it CAN write a proposal
+        # but it CAN write a proposal (prompt_hash + features_snapshot are NOT NULL)
         conn.execute(
             """INSERT INTO proposals
-                 (org_id, txn_id, account_code, account_type, rationale, confidence, pattern_match)
-               VALUES (%s,'t1','6100','expense','fuel',0.99,'seen')""", (org,))
+                 (org_id, txn_id, account_code, account_type, rationale, confidence,
+                  pattern_match, prompt_hash, features_snapshot)
+               VALUES (%s,'t1','6100','expense','fuel',0.99,'seen',
+                       repeat('0',64), '{}'::jsonb)""", (org,))

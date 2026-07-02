@@ -30,7 +30,9 @@ BASE = dict(
     monthly_auto_post_share_cap=0.90,
 )
 
-SENSITIVE_TYPES = {"equity", "tax"}   # never bookkeeper-level auto decisions
+# Error-rate discipline (spec Deliverable 2): trailing window + minimum sample.
+ERROR_WINDOW_DAYS = 90         # trailing window for the correction rate
+MIN_SAMPLE_DECISIONS = 10      # need this many decisions before an error rate tightens autonomy
 
 
 @dataclass
@@ -42,6 +44,7 @@ class Proposal:
     confidence: float
     pattern_match: str            # seen | similar | novel
     model_id: str = "bedrock-cat-1"
+    is_sensitive: bool = False    # account carries policy sensitivity (spec: touches_equity_or_tax)
 
 
 @dataclass
@@ -54,11 +57,19 @@ class Txn:
     direction: str
     doc_id: str
     fraud_flags: tuple = ()
+    related_party: bool = False   # counterparty matched the org's related_parties table
+
+
+def touches_equity_or_tax(p: Proposal) -> bool:
+    """Spec's touches_equity_or_tax_accounts(): equity by type, tax (and any other
+    sensitive account) by the explicit accounts.is_sensitive flag."""
+    return p.account_type == "equity" or p.is_sensitive
 
 
 def error_rate(corrected: int, decided: int) -> float:
-    """Per-account error rate. Needs a sample of >=10 before it tightens."""
-    return (corrected / decided) if decided >= 10 else 0.0
+    """Correction rate, gated by the minimum sample. The trailing-window sourcing
+    lives in PolicyService (it needs the DB); this is the pure ratio + gate."""
+    return (corrected / decided) if decided >= MIN_SAMPLE_DECISIONS else 0.0
 
 
 def thresholds(account_error_rate: float) -> dict:
@@ -97,9 +108,10 @@ def decide(txn: Txn, p: Proposal, t: dict,
         return Decision(HARD_STOP, "amount >= $10,000 or fraud heuristic match",
                         day_cum, month_auto, month_total)
 
-    if p.account_type in SENSITIVE_TYPES:
-        return Decision(CTRL_QUEUE, "touches equity/tax accounts",
-                        day_cum, month_auto, month_total)
+    if txn.related_party or touches_equity_or_tax(p):
+        reason = ("related-party counterparty" if txn.related_party
+                  else "touches equity/tax accounts")
+        return Decision(CTRL_QUEUE, reason, day_cum, month_auto, month_total)
 
     # cumulative cap: increment first (side effect persists), then test.
     day_cum = day_cum_before + txn.amount_minor

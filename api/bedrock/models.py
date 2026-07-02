@@ -16,6 +16,7 @@ class AccountIn(BaseModel):
     name: str
     account_type: str
     normal_balance: str
+    is_sensitive: bool = False   # tax accounts etc.; equity is sensitive by type
 
     @field_validator("normal_balance")
     @classmethod

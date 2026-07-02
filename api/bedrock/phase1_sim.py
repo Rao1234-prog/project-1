@@ -22,7 +22,7 @@ COA = [
     ("1510", "Accum. Depreciation", "contra", "credit"),
     ("2000", "Accounts Payable", "liability", "credit"),
     ("2100", "Payroll Liabilities", "liability", "credit"),
-    ("2200", "Sales Tax Payable", "tax", "credit"),
+    ("2200", "Sales Tax Payable", "liability", "credit"),   # sensitive
     ("3000", "Owner's Equity", "equity", "credit"),
     ("4000", "Service Revenue", "revenue", "credit"),
     ("4100", "Install Revenue", "revenue", "credit"),
@@ -62,7 +62,7 @@ WRONG_POOL = ["5000", "6100", "6200", "6600"]
 def load_coa(ledger: LedgerService, org: str) -> None:
     for code, name, atype, nb in COA:
         try:
-            ledger.add_account(org, code, name, atype, nb)
+            ledger.add_account(org, code, name, atype, nb, is_sensitive=(code == "2200"))
         except Exception:
             pass
 

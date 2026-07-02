@@ -88,7 +88,8 @@ def list_orgs():
 @app.post("/orgs/{org}/accounts")
 def add_account(org: str, body: AccountIn):
     try:
-        aid = svc().add_account(org, body.code, body.name, body.account_type, body.normal_balance)
+        aid = svc().add_account(org, body.code, body.name, body.account_type,
+                                body.normal_balance, is_sensitive=body.is_sensitive)
     except LedgerError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"account_id": aid}

@@ -72,27 +72,28 @@ class LedgerService:
     def ensure_org(self, name: str) -> str:
         with self.pool.connection() as conn:
             row = conn.execute(
-                "INSERT INTO orgs(name) VALUES (%s) ON CONFLICT (name) DO NOTHING RETURNING org_id",
+                "INSERT INTO orgs(legal_name) VALUES (%s) ON CONFLICT (legal_name) DO NOTHING RETURNING org_id",
                 (name,),
             ).fetchone()
             if row is None:  # already exists
-                row = conn.execute("SELECT org_id FROM orgs WHERE name=%s", (name,)).fetchone()
+                row = conn.execute("SELECT org_id FROM orgs WHERE legal_name=%s", (name,)).fetchone()
             return str(row[0])
 
     def list_orgs(self) -> list[dict]:
         with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            rows = cur.execute("SELECT org_id, name FROM orgs ORDER BY name").fetchall()
+            rows = cur.execute(
+                "SELECT org_id, legal_name AS name FROM orgs ORDER BY legal_name").fetchall()
         return [{"org_id": str(r["org_id"]), "name": r["name"]} for r in rows]
 
     # ---- chart of accounts --------------------------------------------
     def add_account(self, org: str, code: str, name: str, account_type: str,
-                    normal_balance: str) -> str:
+                    normal_balance: str, is_sensitive: bool = False) -> str:
         try:
             with self.pool.connection() as conn:
                 row = conn.execute(
-                    """INSERT INTO accounts(org_id, code, name, account_type, normal_balance)
-                       VALUES (%s,%s,%s,%s,%s) RETURNING account_id""",
-                    (org, code, name, account_type, normal_balance),
+                    """INSERT INTO accounts(org_id, code, name, account_type, normal_balance, is_sensitive)
+                       VALUES (%s,%s,%s,%s,%s,%s) RETURNING account_id""",
+                    (org, code, name, account_type, normal_balance, is_sensitive),
                 ).fetchone()
                 return str(row[0])
         except psycopg.errors.UniqueViolation as e:
@@ -123,15 +124,15 @@ class LedgerService:
         sha = _sha256(raw)
         with self.pool.connection() as conn:
             row = conn.execute(
-                """INSERT INTO source_documents(org_id, doc_type, source_system, raw, sha256)
+                """INSERT INTO source_documents(org_id, doc_type, source_system, raw, content_sha256)
                    VALUES (%s,%s,%s,%s,%s)
-                   ON CONFLICT (org_id, sha256) DO NOTHING
+                   ON CONFLICT (org_id, content_sha256) DO NOTHING
                    RETURNING doc_id""",
                 (org, doc_type, source_system, raw, sha),
             ).fetchone()
             if row is None:  # identical content already ingested -> dedupe
                 row = conn.execute(
-                    "SELECT doc_id FROM source_documents WHERE org_id=%s AND sha256=%s",
+                    "SELECT doc_id FROM source_documents WHERE org_id=%s AND content_sha256=%s",
                     (org, sha),
                 ).fetchone()
                 self._log(conn, org, "system", "dedupe_document", str(row[0]), {"sha256": sha})
@@ -320,7 +321,7 @@ class LedgerService:
         with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
                 """SELECT a.name AS account, l.side, l.amount_minor AS amount,
-                          d.doc_type AS document, left(d.sha256,12) AS doc_sha256
+                          d.doc_type AS document, left(d.content_sha256,12) AS doc_sha256
                    FROM journal_lines l
                    JOIN accounts a ON a.account_id = l.account_id
                    JOIN source_documents d ON d.doc_id = l.doc_id
@@ -417,7 +418,7 @@ class LedgerService:
             doc = None
             if lines:
                 doc = cur.execute(
-                    "SELECT doc_type, source_system, raw, sha256 FROM source_documents WHERE doc_id=%s",
+                    "SELECT doc_type, source_system, raw, content_sha256 AS sha256 FROM source_documents WHERE doc_id=%s",
                     (lines[0]["doc_id"],),
                 ).fetchone()
             # the routing decision that produced this entry (may be absent for

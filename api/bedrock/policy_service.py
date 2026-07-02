@@ -24,8 +24,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from .db import make_pool, ai_dsn
-from .policy import (AUTO_POST, POLICY_VERSION, Decision, Proposal, Txn, decide,
-                     error_rate, role_may_clear, thresholds)
+from .policy import (AUTO_POST, ERROR_WINDOW_DAYS, MIN_SAMPLE_DECISIONS, POLICY_VERSION,
+                     Decision, Proposal, Txn, decide, role_may_clear, thresholds)
 from .service import LedgerError, LedgerService, LineInput, _sha256
 
 
@@ -89,16 +89,52 @@ class PolicyService:
 
     # ---- proposal insert via the AI role -------------------------------
     def _insert_proposal(self, org: str, txn_id: str, p: ProposalIn) -> str:
+        # Caller-supplied proposal (test/back-compat path). prompt_hash and
+        # features_snapshot are NOT NULL, so provide a deterministic hash of the
+        # inputs even though no LLM prompt was involved.
+        import hashlib
+        from psycopg.types.json import Jsonb
+        features = {"source": "explicit", "account_code": p.account_code,
+                    "pattern_match": p.pattern_match}
+        prompt_hash = hashlib.sha256(repr(sorted(features.items())).encode()).hexdigest()
         with self.ai_pool.connection() as conn:
             row = conn.execute(
                 """INSERT INTO proposals
                      (org_id, txn_id, account_code, account_type, rationale,
-                      confidence, pattern_match, model_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING proposal_id""",
+                      confidence, pattern_match, model_id, source_layer,
+                      prompt_template_version, prompt_hash, features_snapshot)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'explicit','explicit-1',%s,%s)
+                   RETURNING proposal_id""",
                 (org, txn_id, p.account_code, p.account_type, p.rationale,
-                 p.confidence, p.pattern_match, p.model_id),
+                 p.confidence, p.pattern_match, p.model_id, prompt_hash, Jsonb(features)),
             ).fetchone()
             return str(row[0])
+
+    # ---- trailing-window error rate (spec Deliverable 2) --------------
+    def _windowed_error_rate(self, conn, org: str, account_code: str) -> float:
+        """Correction rate over the trailing ERROR_WINDOW_DAYS, per (org, account)
+        with an org-global fallback. Tightens only past MIN_SAMPLE_DECISIONS."""
+        def _rate(sql, params):
+            row = conn.execute(sql, params).fetchone()
+            decided, corrected = row[0], row[1]
+            return (corrected / decided) if decided >= MIN_SAMPLE_DECISIONS else None
+
+        base = """
+            SELECT count(*) AS decided,
+                   count(*) FILTER (WHERE q.action <> 'approve') AS corrected
+            FROM review_queue q
+            JOIN routing_decisions d ON d.decision_id = q.decision_id
+            JOIN proposals p         ON p.proposal_id = d.proposal_id
+            WHERE q.org_id=%s AND q.status='resolved'
+              AND q.action IN ('approve','correct','reject')
+              AND q.resolved_at >= now() - make_interval(days => %s)
+        """
+        per_acct = _rate(base + " AND p.account_code=%s",
+                         (org, ERROR_WINDOW_DAYS, account_code))
+        if per_acct is not None:
+            return per_acct
+        org_global = _rate(base, (org, ERROR_WINDOW_DAYS))   # fallback
+        return org_global if org_global is not None else 0.0
 
     # ---- ingest + route ------------------------------------------------
     def ingest_transaction(self, org: str, *, day: str, amount_minor: int,
@@ -176,13 +212,18 @@ class PolicyService:
                     p_pattern = cat.pattern_match
                     p_model = cat.model_id
 
-                # --- load prior persistent state ----------------------------
-                corr = conn.execute(
-                    "SELECT corrected, decided FROM account_error_rates WHERE org_id=%s AND account_code=%s",
-                    (org, p_account_code),
-                ).fetchone()
-                corrected, decided = (corr[0], corr[1]) if corr else (0, 0)
-                t = thresholds(error_rate(corrected, decided))
+                # --- effective thresholds: trailing-window error rate --------
+                t = thresholds(self._windowed_error_rate(conn, org, p_account_code))
+
+                # authoritative account sensitivity/type + related-party status
+                acct = conn.execute(
+                    "SELECT account_type, is_sensitive FROM accounts WHERE org_id=%s AND code=%s",
+                    (org, p_account_code)).fetchone()
+                eff_type = acct[0] if acct else p_account_type
+                eff_sensitive = bool(acct[1]) if acct else False
+                related = conn.execute(
+                    "SELECT 1 FROM related_parties WHERE org_id=%s AND counterparty=%s",
+                    (org, counterparty)).fetchone() is not None
 
                 month = day[:7]
                 dc = conn.execute(
@@ -198,9 +239,10 @@ class PolicyService:
 
                 # --- decide -------------------------------------------------
                 txn = Txn(tid, day, amount_minor, counterparty, description, direction,
-                          doc_id, tuple(fraud_flags))
-                prop = Proposal(tid, p_account_code, p_account_type,
-                                p_rationale, p_confidence, p_pattern, p_model)
+                          doc_id, tuple(fraud_flags), related_party=related)
+                prop = Proposal(tid, p_account_code, eff_type,
+                                p_rationale, p_confidence, p_pattern, p_model,
+                                is_sensitive=eff_sensitive)
                 d: Decision = decide(txn, prop, t, day_cum_before,
                                      month_auto_before, month_total_before)
 
@@ -281,8 +323,8 @@ class PolicyService:
     def submit_review(self, org: str, txn_id: str, *, action: str, reviewer_id: str,
                       reviewer_role: str, corrected_account_code: Optional[str] = None,
                       cash_account_code: str = "1000") -> dict:
-        if action not in ("approve", "correct", "reject"):
-            raise PolicyError("action must be approve, correct, or reject")
+        if action not in ("approve", "correct", "reject", "escalate"):
+            raise PolicyError("action must be approve, correct, reject, or escalate")
         if action == "correct" and not corrected_account_code:
             raise PolicyError("correct requires corrected_account_code")
 
@@ -310,6 +352,24 @@ class PolicyService:
                 if not role_may_clear(reviewer_role, lane):
                     raise Unauthorized(
                         f"role '{reviewer_role}' may not clear a '{lane}' item")
+
+                # --- escalate: re-route to the controller lane --------------
+                # No ledger post and no correction signal — escalation is a
+                # hand-off, not a verdict on the proposal.
+                if action == "escalate":
+                    conn.execute(
+                        """UPDATE review_queue SET status='resolved', action='escalate',
+                               reviewer_id=%s, reviewer_role=%s, resolved_at=now()
+                           WHERE queue_id=%s""",
+                        (reviewer_id, reviewer_role, queue_id))
+                    conn.execute(
+                        """INSERT INTO review_queue (org_id, txn_id, decision_id, lane, status)
+                           VALUES (%s,%s,%s,'controller_queue','open')""",
+                        (org, txn_id, decision_id))
+                    self.ledger._log(conn, org, f"human:{reviewer_role}", "review_escalate",
+                                     txn_id, {"from_lane": lane, "reviewer": reviewer_id})
+                    return {"txn_id": txn_id, "action": "escalate", "status": "escalated",
+                            "lane": "controller_queue", "posted_entry_id": None}
 
                 # --- error-rate feedback (per org, per proposed account) ----
                 # approve => not corrected; correct/reject => the proposal was wrong.
@@ -370,15 +430,17 @@ class PolicyService:
             return [dict(r) for r in cur.execute(sql, params).fetchall()]
 
     def account_error(self, org: str, account_code: str) -> dict:
+        from .policy import ERROR_WINDOW_DAYS
         with self.ledger.pool.connection() as conn:
             row = conn.execute(
                 "SELECT corrected, decided FROM account_error_rates WHERE org_id=%s AND account_code=%s",
                 (org, account_code),
             ).fetchone()
-        corrected, decided = (row[0], row[1]) if row else (0, 0)
+            err = self._windowed_error_rate(conn, org, account_code)   # trailing-window rate
+        corrected, decided = (row[0], row[1]) if row else (0, 0)       # lifetime tally
         return {"account_code": account_code, "corrected": corrected, "decided": decided,
-                "error_rate": error_rate(corrected, decided),
-                "effective_thresholds": thresholds(error_rate(corrected, decided))}
+                "error_rate": err, "window_days": ERROR_WINDOW_DAYS,
+                "effective_thresholds": thresholds(err)}
 
     # ---- accuracy audit (Phase D) -------------------------------------
     def accuracy_audit(self, org: str) -> dict:

@@ -14,8 +14,8 @@ def _txn(amount, cp="V", day="2026-05-01", direction="outflow", flags=()):
     return Txn("t1", day, amount, cp, "desc", direction, "doc1", flags)
 
 
-def _prop(atype="expense", conf=0.99, pattern="seen", code="6100"):
-    return Proposal("t1", code, atype, "why", conf, pattern)
+def _prop(atype="expense", conf=0.99, pattern="seen", code="6100", is_sensitive=False):
+    return Proposal("t1", code, atype, "why", conf, pattern, is_sensitive=is_sensitive)
 
 
 # --- error_rate / thresholds ------------------------------------------------
@@ -44,9 +44,19 @@ def test_hard_stop_by_fraud_flag():
     assert d.decision == HARD_STOP
 
 
-def test_sensitive_type_goes_to_controller():
-    d = decide(_txn(100), _prop(atype="tax"), BASE, 0, 0, 9)
-    assert d.decision == CTRL_QUEUE
+def test_sensitive_account_goes_to_controller():
+    # equity by type
+    assert decide(_txn(100), _prop(atype="equity"), BASE, 0, 0, 9).decision == CTRL_QUEUE
+    # tax (or any sensitive account) by the explicit is_sensitive flag
+    assert decide(_txn(100), _prop(is_sensitive=True), BASE, 0, 0, 9).decision == CTRL_QUEUE
+
+
+def test_related_party_goes_to_controller():
+    d = decide(_txn(100), _prop(), BASE, 0, 0, 9)   # control: not related
+    assert d.decision != CTRL_QUEUE
+    rp = _txn(100)
+    rp.related_party = True
+    assert decide(rp, _prop(), BASE, 0, 0, 9).decision == CTRL_QUEUE
 
 
 def test_cumulative_cap_queues():
