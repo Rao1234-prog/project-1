@@ -9,5 +9,9 @@ __pycache__/
 .venv/
 venv/
 
+# node / vite
+node_modules/
+web/dist/
+
 # env
 .env

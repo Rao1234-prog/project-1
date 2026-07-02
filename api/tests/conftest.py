@@ -105,3 +105,24 @@ def porg(policy) -> str:
     for code, name, atype, nb in COA:
         policy.ledger.add_account(org, code, name, atype, nb)
     return org
+
+
+@pytest.fixture
+def client(app_url, ai_url, monkeypatch):
+    """FastAPI TestClient wired to the running database."""
+    monkeypatch.setenv("BEDROCK_DATABASE_URL", app_url)
+    monkeypatch.setenv("BEDROCK_AI_URL", ai_url)
+    from fastapi.testclient import TestClient
+    from bedrock.main import app
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def api_org(client):
+    """Fresh org with the full chart of accounts, created through the API."""
+    org = client.post("/orgs", json={"name": f"api-{uuid.uuid4()}"}).json()["org_id"]
+    for code, name, atype, nb in COA:
+        client.post(f"/orgs/{org}/accounts",
+                    json={"code": code, "name": name, "account_type": atype, "normal_balance": nb})
+    return org

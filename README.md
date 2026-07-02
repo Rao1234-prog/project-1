@@ -98,6 +98,59 @@ categorizations auto-posted, every txn ≥ $10,000 hard-stopped, every
 novel-pattern txn queued, the cumulative cap firing on a same-day sequence, the
 auto-post share under the cap, trial balance zero, and the chain verified.
 
+## Phase C — Frontend on real data ✅
+
+A Vite + React app (`web/`) that talks to the API instead of in-memory state,
+plus the server-side surface the UI renders. **The UI enforces nothing** — every
+rule (lane authorization, close-blocking) is enforced by the API.
+
+### Server-side first
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /orgs/{org}/balances` | every account with its balance (integer cents) |
+| `GET /orgs/{org}/entries?limit&offset` | paginated journal entries + lines |
+| `GET /orgs/{org}/entries/{id}/trail` | full provenance join in one response: line → entry → decision (stored thresholds + reason) → proposal → document → reviewer → hash |
+| `GET /orgs/{org}/queue` | open review-queue items |
+| `GET /orgs/{org}/audit` | audit log |
+| `POST /orgs/{org}/reconciliations/approve` | approve a bank reconciliation (controller) |
+| `GET /orgs/{org}/close/checklist?period=` | checklist + server-computed adversarial findings + blocking flags |
+| `POST /orgs/{org}/close/approve` | **409 if any blocking finding** — the client cannot force a close (controller) |
+
+### Role from the server boundary
+
+The acting role is the `X-Bedrock-Role` header (`bookkeeper` / `controller` /
+`cpa`) the UI's "acting as" switcher sets. The API enforces lane authorization
+(a bookkeeper cannot clear a `controller_queue` or `hard_stop` item) and
+requires `controller` to approve a reconciliation or a close.
+
+### UI contract
+
+Five tabs (Overview / Review queue / Ledger / Close / Advisor), the paper-trail
+drawer rendered from the trail join, the close-blocking flow, the `CLOSED` stamp,
+and the exact design tokens (palette + IBM Plex Serif/Sans/Mono roles) — all in
+one module, `web/src/tokens.js`. Amounts travel as integer cents and are
+formatted only at render. Every list has an empty state; every failed request
+surfaces what went wrong and what to do (a 409 shows the blocking findings, a
+403 shows the required role).
+
+### Seed + run the frontend
+
+```bash
+# seed the June demo state (idempotent; --reset to rebuild)
+BEDROCK_DATABASE_URL=… BEDROCK_AI_URL=… python3 scripts/seed_demo.py
+uvicorn bedrock.main:app --app-dir api            # API on :8000
+cd web && npm install && npm run dev              # app on :5173
+```
+
+### Phase C gate
+
+`scripts/run_gate.sh` runs pytest (incl. the trail-join / close-409 / role-403
+contract tests), builds the frontend (`vite build`), and walks the demo via the
+API: the review queue is worked down, close is blocked (409), reconciliation is
+approved, close is approved (period locks), and a post into the locked period is
+rejected.
+
 ## Running it
 
 ### With Docker (preferred)

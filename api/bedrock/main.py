@@ -7,30 +7,43 @@ balance, immutability, provenance, the hash chain, and period locks.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-from .models import (AccountIn, ClosePeriodIn, DocumentIn, EntryIn, OrgIn, ReviewIn,
-                     ReverseIn, TransactionIn)
+from .close_service import CloseBlocked, CloseService
+from .models import (AccountIn, CloseApproveIn, ClosePeriodIn, DocumentIn, EntryIn, OrgIn,
+                     ReconApproveIn, ReviewIn, ReverseIn, TransactionIn)
+from .policy import VALID_ROLES
 from .policy_service import (DocumentIn as PDoc, PolicyService, ProposalIn, PolicyError,
                              Unauthorized)
 from .service import LedgerError, LedgerService, LineInput
 
 service: LedgerService | None = None
 policy: PolicyService | None = None
+close_svc: CloseService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global service, policy
+    global service, policy, close_svc
     policy = PolicyService()
     service = policy.ledger      # share the same ledger/app pool
+    close_svc = CloseService(service)
     yield
     if policy:
         policy.close()
 
 
 app = FastAPI(title="Bedrock Ledger", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def svc() -> LedgerService:
@@ -43,6 +56,20 @@ def pol() -> PolicyService:
     return policy
 
 
+def closer() -> CloseService:
+    assert close_svc is not None
+    return close_svc
+
+
+def require_role(x_bedrock_role: Optional[str] = Header(default=None)) -> str:
+    """The acting role comes from the server boundary (the X-Bedrock-Role header
+    the UI's 'acting as' switcher sets), never from the request body."""
+    if not x_bedrock_role or x_bedrock_role not in VALID_ROLES:
+        raise HTTPException(status_code=400,
+                            detail=f"X-Bedrock-Role header required (one of {sorted(VALID_ROLES)})")
+    return x_bedrock_role
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -51,6 +78,11 @@ def health():
 @app.post("/orgs")
 def create_org(body: OrgIn):
     return {"org_id": svc().ensure_org(body.name)}
+
+
+@app.get("/orgs")
+def list_orgs():
+    return {"orgs": svc().list_orgs()}
 
 
 @app.post("/orgs/{org}/accounts")
@@ -143,15 +175,20 @@ def ingest_transaction(org: str, body: TransactionIn):
 
 
 @app.post("/orgs/{org}/transactions/{txn_id}/reviews")
-def submit_review(org: str, txn_id: str, body: ReviewIn):
+def submit_review(org: str, txn_id: str, body: ReviewIn,
+                  x_bedrock_role: Optional[str] = Header(default=None)):
+    # The authoritative role is the server boundary header, not the body.
+    role = require_role(x_bedrock_role)
     try:
         return pol().submit_review(
             org, txn_id, action=body.action, reviewer_id=body.reviewer_id,
-            reviewer_role=body.reviewer_role,
+            reviewer_role=role,
             corrected_account_code=body.corrected_account_code,
             cash_account_code=body.cash_account_code)
     except Unauthorized as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403,
+                            detail={"error": str(e), "required_role": "controller",
+                                    "acting_role": role})
     except (PolicyError, LedgerError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -164,3 +201,61 @@ def get_queue(org: str, lane: str | None = None):
 @app.get("/orgs/{org}/accounts/{code}/error-rate")
 def account_error(org: str, code: str):
     return pol().account_error(org, code)
+
+
+# ---- Phase C: reads, trail, reconciliation, close --------------------------
+@app.get("/orgs/{org}/balances")
+def balances(org: str):
+    return {"balances": svc().list_balances(org)}
+
+
+@app.get("/orgs/{org}/entries")
+def entries(org: str, limit: int = 50, offset: int = 0):
+    return svc().list_entries(org, limit=limit, offset=offset)
+
+
+@app.get("/orgs/{org}/entries/{entry_id}/trail")
+def entry_trail(org: str, entry_id: str):
+    t = svc().trail(org, entry_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="entry not found")
+    return t
+
+
+@app.get("/orgs/{org}/audit")
+def audit(org: str, limit: int = 100, offset: int = 0):
+    return {"audit": svc().audit_log(org, limit=limit, offset=offset)}
+
+
+@app.post("/orgs/{org}/reconciliations/approve")
+def approve_reconciliation(org: str, body: ReconApproveIn,
+                           x_bedrock_role: Optional[str] = Header(default=None)):
+    role = require_role(x_bedrock_role)
+    if role != "controller":
+        raise HTTPException(status_code=403,
+                            detail={"error": "approving a reconciliation requires controller",
+                                    "required_role": "controller", "acting_role": role})
+    return closer().approve_reconciliation(org, body.account_code, body.period,
+                                           approved_by=body.approved_by, approved_role=role)
+
+
+@app.get("/orgs/{org}/close/checklist")
+def close_checklist(org: str, period: str):
+    return closer().checklist(org, period)
+
+
+@app.post("/orgs/{org}/close/approve")
+def close_approve(org: str, body: CloseApproveIn,
+                  x_bedrock_role: Optional[str] = Header(default=None)):
+    role = require_role(x_bedrock_role)
+    if role != "controller":
+        raise HTTPException(status_code=403,
+                            detail={"error": "approving a close requires controller",
+                                    "required_role": "controller", "acting_role": role})
+    try:
+        return closer().approve_close(org, body.period, approved_by=body.approved_by,
+                                      approved_role=role)
+    except CloseBlocked as e:
+        # The client cannot force a close: a blocking finding -> 409 with the findings.
+        raise HTTPException(status_code=409,
+                            detail={"error": "close blocked", "findings": e.findings})

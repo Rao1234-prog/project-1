@@ -134,13 +134,16 @@ def decide(txn: Txn, p: Proposal, t: dict,
 # --- review-lane authorization ---------------------------------------------
 # Which reviewer roles may clear which lanes. A bookkeeper cannot clear a
 # controller_queue or hard_stop item; a controller can clear anything.
+_ALL_LANES = {"bookkeeper_queue", "bookkeeper_queue_lowconf", "qa_sample",
+              "controller_queue", "hard_stop"}
 LANE_AUTHORIZATION = {
     "bookkeeper": {"bookkeeper_queue", "bookkeeper_queue_lowconf", "qa_sample"},
-    "controller": {"bookkeeper_queue", "bookkeeper_queue_lowconf", "qa_sample",
-                   "controller_queue", "hard_stop"},
-    "admin": {"bookkeeper_queue", "bookkeeper_queue_lowconf", "qa_sample",
-              "controller_queue", "hard_stop"},
+    "controller": set(_ALL_LANES),
+    "cpa": set(_ALL_LANES),        # licensed; may clear any lane
+    "admin": set(_ALL_LANES),
 }
+
+VALID_ROLES = {"bookkeeper", "controller", "cpa"}
 
 
 def role_may_clear(role: str, lane: str) -> bool:

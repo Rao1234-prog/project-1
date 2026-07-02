@@ -7,25 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.fixture
-def client(app_url, ai_url, monkeypatch):
-    monkeypatch.setenv("BEDROCK_DATABASE_URL", app_url)
-    monkeypatch.setenv("BEDROCK_AI_URL", ai_url)
-    from bedrock.main import app
-    with TestClient(app) as c:
-        yield c
-
-
-def _setup_org(client):
-    org = client.post("/orgs", json={"name": f"api-b-{uuid.uuid4()}"}).json()["org_id"]
-    for code, name, atype, nb in [("1000", "Cash", "asset", "debit"),
-                                  ("3000", "Equity", "equity", "credit"),
-                                  ("6100", "Fuel", "expense", "debit"),
-                                  ("5000", "Parts", "expense", "debit"),
-                                  ("2200", "Sales Tax Payable", "tax", "credit")]:
-        client.post(f"/orgs/{org}/accounts",
-                    json={"code": code, "name": name, "account_type": atype, "normal_balance": nb})
-    return org
+# `client` and `api_org` fixtures come from conftest.py.
 
 
 def test_api_end_to_end(client):
@@ -74,8 +56,8 @@ def test_api_end_to_end(client):
     assert {p["account"] for p in prov} == {"Cash", "Equity"}
 
 
-def test_transactions_and_reviews_api(client):
-    org = _setup_org(client)
+def test_transactions_and_reviews_api(client, api_org):
+    org = api_org
 
     # a controller-lane item (sensitive tax account) — not auto-posted
     r = client.post(f"/orgs/{org}/transactions", json={
@@ -100,14 +82,16 @@ def test_transactions_and_reviews_api(client):
                      "confidence": 0.99, "pattern_match": "seen"}})
     assert again.json()["deduped"] is True
 
-    # a bookkeeper cannot clear the controller lane (403)
+    # a bookkeeper cannot clear the controller lane (403) — role from header
     bad = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
-                      json={"action": "approve", "reviewer_id": "bk", "reviewer_role": "bookkeeper"})
+                      headers={"X-Bedrock-Role": "bookkeeper"},
+                      json={"action": "approve", "reviewer_id": "bk"})
     assert bad.status_code == 403
 
     # controller can
     good = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
-                       json={"action": "approve", "reviewer_id": "ctrl", "reviewer_role": "controller"})
+                       headers={"X-Bedrock-Role": "controller"},
+                       json={"action": "approve", "reviewer_id": "ctrl"})
     assert good.status_code == 200
     assert good.json()["status"] == "resolved"
 

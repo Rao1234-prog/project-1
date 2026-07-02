@@ -118,4 +118,26 @@ p.close()
 PY
 fi
 
+# ---- Phase C: vite build + demo walk ---------------------------------------
+if [ -f "${ROOT}/web/package.json" ] && command -v npm >/dev/null 2>&1; then
+  echo
+  echo "== Phase C: vite build =="
+  ( cd "${ROOT}/web"
+    [ -d node_modules ] || npm install >/dev/null 2>&1
+    npm run build 2>&1 | tail -3 )
+fi
+
+if [ -n "${BEDROCK_AI_URL:-}" ]; then
+  echo
+  echo "== Phase C: demo walk (queue -> close -> lock, via API) =="
+  ( cd "${ROOT}/api"
+    uvicorn bedrock.main:app --host 127.0.0.1 --port 8000 >/tmp/bedrock_uvicorn.log 2>&1 &
+    UV=$!
+    for _ in $(seq 1 20); do
+      curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && break; sleep 0.5
+    done
+    BEDROCK_API_URL=http://127.0.0.1:8000 python3 "${ROOT}/scripts/demo_walk.py" || true
+    kill "${UV}" 2>/dev/null || true )
+fi
+
 exit $rc

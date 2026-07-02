@@ -111,6 +111,19 @@ class TransactionIn(BaseModel):
 class ReviewIn(BaseModel):
     action: str                    # approve | correct | reject
     reviewer_id: str
-    reviewer_role: str             # bookkeeper | controller | admin
+    # role now comes from the X-Bedrock-Role header, not the body; kept optional
+    # for backward compatibility but ignored by the API.
+    reviewer_role: Optional[str] = None
     corrected_account_code: Optional[str] = None
     cash_account_code: str = "1000"
+
+
+class ReconApproveIn(BaseModel):
+    account_code: str
+    period: str                    # YYYY-MM
+    approved_by: str
+
+
+class CloseApproveIn(BaseModel):
+    period: str                    # YYYY-MM
+    approved_by: str

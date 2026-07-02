@@ -79,6 +79,11 @@ class LedgerService:
                 row = conn.execute("SELECT org_id FROM orgs WHERE name=%s", (name,)).fetchone()
             return str(row[0])
 
+    def list_orgs(self) -> list[dict]:
+        with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute("SELECT org_id, name FROM orgs ORDER BY name").fetchall()
+        return [{"org_id": str(r["org_id"]), "name": r["name"]} for r in rows]
+
     # ---- chart of accounts --------------------------------------------
     def add_account(self, org: str, code: str, name: str, account_type: str,
                     normal_balance: str) -> str:
@@ -325,13 +330,144 @@ class LedgerService:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def audit_log(self, org: str) -> list[dict]:
+    def audit_log(self, org: str, limit: int = 100, offset: int = 0) -> list[dict]:
         with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
-                "SELECT actor, action, object, detail FROM audit_log WHERE org_id=%s ORDER BY log_id",
+                """SELECT actor, action, object, detail, created_at
+                   FROM audit_log WHERE org_id=%s
+                   ORDER BY log_id DESC LIMIT %s OFFSET %s""",
+                (org, limit, offset),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- Phase C reads -------------------------------------------------
+    def list_balances(self, org: str) -> list[dict]:
+        """Every account with its balance (integer minor units)."""
+        with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """SELECT a.code, a.name, a.account_type, a.normal_balance,
+                          COALESCE(sum(CASE WHEN l.side=a.normal_balance
+                                            THEN l.amount_minor ELSE -l.amount_minor END),0) AS balance
+                   FROM accounts a
+                   LEFT JOIN journal_lines l ON l.account_id=a.account_id
+                   WHERE a.org_id=%s
+                   GROUP BY a.code, a.name, a.account_type, a.normal_balance
+                   ORDER BY a.code""",
                 (org,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def list_entries(self, org: str, limit: int = 50, offset: int = 0) -> dict:
+        """Paginated journal entries (most recent first) with their lines."""
+        with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            total = cur.execute(
+                "SELECT count(*) AS n FROM journal_entries WHERE org_id=%s", (org,)
+            ).fetchone()["n"]
+            entries = cur.execute(
+                """SELECT entry_id, entry_date, entry_type, memo, posted_by_policy,
+                          reverses, entry_hash, prev_hash, chain_seq
+                   FROM journal_entries WHERE org_id=%s
+                   ORDER BY chain_seq DESC NULLS LAST LIMIT %s OFFSET %s""",
+                (org, limit, offset),
+            ).fetchall()
+            ids = [r["entry_id"] for r in entries]
+            lines_by_entry: dict = {r["entry_id"]: [] for r in entries}
+            if ids:
+                lines = cur.execute(
+                    """SELECT l.entry_id, a.code, a.name, l.side, l.amount_minor
+                       FROM journal_lines l JOIN accounts a ON a.account_id=l.account_id
+                       WHERE l.entry_id = ANY(%s) ORDER BY l.line_id""",
+                    (ids,),
+                ).fetchall()
+                for ln in lines:
+                    lines_by_entry[ln["entry_id"]].append(
+                        {"code": ln["code"], "name": ln["name"], "side": ln["side"],
+                         "amount_minor": ln["amount_minor"]})
+        out = []
+        for e in entries:
+            out.append({
+                "entry_id": str(e["entry_id"]), "date": e["entry_date"].isoformat(),
+                "entry_type": e["entry_type"], "memo": e["memo"],
+                "posted_by_policy": e["posted_by_policy"],
+                "entry_hash": e["entry_hash"], "chain_seq": e["chain_seq"],
+                "lines": lines_by_entry[e["entry_id"]],
+            })
+        return {"total": total, "limit": limit, "offset": offset, "entries": out}
+
+    def trail(self, org: str, entry_id: str) -> Optional[dict]:
+        """Full provenance join for one entry:
+        line -> entry -> decision (incl stored thresholds + reason) -> proposal
+             -> document -> reviewer -> hash. One response; nothing generated."""
+        with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            e = cur.execute(
+                """SELECT entry_id, entry_date, entry_type, memo, posted_by_policy,
+                          entry_hash, prev_hash, chain_seq
+                   FROM journal_entries WHERE org_id=%s AND entry_id=%s""",
+                (org, entry_id),
+            ).fetchone()
+            if not e:
+                return None
+            lines = cur.execute(
+                """SELECT a.code, a.name, l.side, l.amount_minor, l.doc_id
+                   FROM journal_lines l JOIN accounts a ON a.account_id=l.account_id
+                   WHERE l.entry_id=%s ORDER BY l.line_id""",
+                (entry_id,),
+            ).fetchall()
+            # primary source document = the first line's document
+            doc = None
+            if lines:
+                doc = cur.execute(
+                    "SELECT doc_type, source_system, raw, sha256 FROM source_documents WHERE doc_id=%s",
+                    (lines[0]["doc_id"],),
+                ).fetchone()
+            # the routing decision that produced this entry (may be absent for
+            # migration / manual close adjustments)
+            decision = cur.execute(
+                """SELECT decision_id, decision, reason, policy_version, effective_thresholds,
+                          qa_sampled, proposal_id, status
+                   FROM routing_decisions WHERE org_id=%s AND posted_entry_id=%s""",
+                (org, entry_id),
+            ).fetchone()
+            proposal = None
+            reviewer = None
+            if decision:
+                proposal = cur.execute(
+                    """SELECT account_code, account_type, rationale, confidence,
+                              pattern_match, model_id
+                       FROM proposals WHERE proposal_id=%s""",
+                    (decision["proposal_id"],),
+                ).fetchone()
+                rq = cur.execute(
+                    """SELECT action, reviewer_id, reviewer_role
+                       FROM review_queue WHERE decision_id=%s AND status='resolved'
+                       ORDER BY resolved_at DESC LIMIT 1""",
+                    (decision["decision_id"],),
+                ).fetchone()
+                if rq and rq["reviewer_id"]:
+                    reviewer = {"id": rq["reviewer_id"], "role": rq["reviewer_role"],
+                                "kind": "human", "action": rq["action"]}
+                elif decision["decision"] == "auto_post":
+                    reviewer = {"id": "Policy engine v1.0.0",
+                                "role": "Deterministic auto-post rule", "kind": "auto",
+                                "action": "auto_post"}
+
+        return {
+            "entry": {"entry_id": str(e["entry_id"]), "date": e["entry_date"].isoformat(),
+                      "entry_type": e["entry_type"], "memo": e["memo"],
+                      "posted_by_policy": e["posted_by_policy"],
+                      "entry_hash": e["entry_hash"], "prev_hash": e["prev_hash"],
+                      "chain_seq": e["chain_seq"]},
+            "amount_minor": sum(l["amount_minor"] for l in lines if l["side"] == "debit"),
+            "lines": [{"code": l["code"], "name": l["name"], "side": l["side"],
+                       "amount_minor": l["amount_minor"]} for l in lines],
+            "document": (dict(doc) if doc else None),
+            "decision": (dict(decision) | {"decision_id": str(decision["decision_id"]),
+                                           "proposal_id": str(decision["proposal_id"])}
+                         if decision else None),
+            "proposal": (dict(proposal) | {"confidence": float(proposal["confidence"])}
+                         if proposal else None),
+            "reviewer": reviewer,
+        }
 
     # ---- internal ------------------------------------------------------
     @staticmethod
