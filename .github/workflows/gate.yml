@@ -1,0 +1,77 @@
+name: gate
+
+# Enforce the phase gates on every push: apply the Section 1.2 schema to a fresh
+# Postgres 16, run the full pytest suite (mocked — no LLM network), and build the
+# frontend. Mirrors scripts/run_gate.sh (pytest + vite build) against a service
+# container instead of the local cluster.
+on:
+  push:
+    branches: [claude/bedrock-bookkeeping-d3srwm, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bedrock
+          POSTGRES_PASSWORD: bedrock
+          POSTGRES_DB: bedrock
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bedrock -d bedrock"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # superuser (schema/admin + tamper test) and the two least-privilege roles
+      BEDROCK_ADMIN_URL:    postgresql://bedrock:bedrock@localhost:5432/bedrock
+      BEDROCK_DATABASE_URL: postgresql://bedrock_app:app_secret@localhost:5432/bedrock
+      BEDROCK_AI_URL:       postgresql://bedrock_ai:ai_secret@localhost:5432/bedrock
+      BEDROCK_APP_PASSWORD: app_secret
+      BEDROCK_AI_PASSWORD:  ai_secret
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: bedrock
+      PGPASSWORD: bedrock
+      PGDATABASE: bedrock
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Apply schema (Section 1.2 + roles/grants + all migrations)
+        run: bash db/apply.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API deps
+        run: |
+          pip install -r api/requirements.txt
+          pip install anthropic          # LLM fallback client (mocked in tests)
+
+      - name: pytest (mocked — no LLM network)
+        working-directory: api
+        run: python -m pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: vite build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
