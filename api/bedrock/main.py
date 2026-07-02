@@ -159,19 +159,27 @@ def verify_chain(org: str):
 # ---- Phase B: policy engine + review ---------------------------------------
 @app.post("/orgs/{org}/transactions")
 def ingest_transaction(org: str, body: TransactionIn):
+    proposal = None
+    if body.proposal is not None:
+        proposal = ProposalIn(body.proposal.account_code, body.proposal.account_type,
+                              body.proposal.rationale, body.proposal.confidence,
+                              body.proposal.pattern_match, body.proposal.model_id)
     try:
         return pol().ingest_transaction(
             org, day=body.day, amount_minor=body.amount_minor,
             counterparty=body.counterparty, description=body.description,
             direction=body.direction,
             document=PDoc(body.document.doc_type, body.document.source_system, body.document.raw),
-            proposal=ProposalIn(body.proposal.account_code, body.proposal.account_type,
-                                body.proposal.rationale, body.proposal.confidence,
-                                body.proposal.pattern_match, body.proposal.model_id),
+            proposal=proposal,
             txn_id=body.txn_id, fraud_flags=tuple(body.fraud_flags),
             cash_account_code=body.cash_account_code)
     except LedgerError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/orgs/{org}/audit/accuracy")
+def audit_accuracy(org: str):
+    return pol().accuracy_audit(org)
 
 
 @app.post("/orgs/{org}/transactions/{txn_id}/reviews")

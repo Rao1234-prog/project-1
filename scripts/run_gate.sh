@@ -140,4 +140,11 @@ if [ -n "${BEDROCK_AI_URL:-}" ]; then
     kill "${UV}" 2>/dev/null || true )
 fi
 
+# ---- Phase D: categorizer demo (offline stub LLM) --------------------------
+if [ -n "${BEDROCK_AI_URL:-}" ]; then
+  echo
+  echo "== Phase D: categorizer demo (fresh vendor -> LLM -> correct -> pattern memory) =="
+  ( cd "${ROOT}/api" && python3 "${ROOT}/scripts/demo_phase_d.py" || true )
+fi
+
 exit $rc

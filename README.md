@@ -151,6 +151,59 @@ API: the review queue is worked down, close is blocked (409), reconciliation is
 approved, close is approved (period locks), and a post into the locked period is
 rejected.
 
+## Phase D — Real categorization ✅
+
+Replaces the simulated proposals with a real categorizer and adds the accuracy
+audit.
+
+### Categorizer (`api/bedrock/categorizer.py`)
+
+Two layers, in order:
+1. **Pattern memory** — exact then fuzzy vendor match against *approved review
+   history*. Grounded, so these proposals may exceed the 0.97 auto-post gate.
+2. **LLM fallback** — only on a miss. `claude-haiku-4-5`, `temperature=0`, strict
+   JSON `{account_code, confidence, rationale}`.
+
+Guarantees:
+- **The system decides `pattern_match`** (exact ≥N approved = `seen`, fuzzy =
+  `similar`, else `novel`) — the model can't claim familiarity it lacks.
+- **LLM confidence capped at 0.90** (uncalibrated self-report can never clear the
+  0.97 gate); only grounded pattern-memory proposals exceed it, so every new
+  vendor's first pass goes through a human.
+- **`account_code` validated** against the org's real chart of accounts; **never
+  computes amounts.**
+- **Fail toward review** — timeout / error / malformed JSON / invalid account →
+  a `confidence 0.0` proposal that routes to the queue. Never fail open.
+- **Replayable** — `model_id`, `prompt_template_version`, `prompt_hash`, and the
+  raw response are persisted; identical content reuses the cached proposal (no
+  second API call).
+- **AI boundary** — proposals (pattern-memory and LLM alike) are written only
+  through the `bedrock_ai` role.
+
+Model note: the task requires `temperature=0`, which Opus 4.8 / Sonnet 5 reject
+(HTTP 400); Haiku 4.5 honors it and is the right tier for categorization.
+
+### Accuracy audit
+
+`GET /orgs/{org}/audit/accuracy` — per-account and per-pattern agreement between
+proposals and human decisions, overall first-pass rate vs the 95% gate, and the
+wrong-auto-post count (0 structurally). Rendered as the sixth **Audit** tab.
+
+### Tests & live smoke
+
+Every test mocks the Anthropic client — **no network in pytest**. A live smoke
+test runs only when `RUN_LIVE_LLM=1` and `ANTHROPIC_API_KEY` are set;
+`api.anthropic.com` is reachable from this environment (a 401 without creds), so
+it can run there. The mocked suite is the gate.
+
+### Phase D gate
+
+`scripts/run_gate.sh` runs the mocked pytest suite, `vite build`, and the
+end-to-end categorizer demo (`scripts/demo_phase_d.py`): a fresh vendor →
+LLM fallback proposes (novel, capped) → human corrects → the per-account error
+rate updates → the same vendor's next transaction is served from pattern memory
+and can auto-post.
+
 ## Running it
 
 ### With Docker (preferred)

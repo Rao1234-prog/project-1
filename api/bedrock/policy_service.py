@@ -63,9 +63,25 @@ def _qa_sampled(content_sha256: str) -> bool:
 class PolicyService:
     def __init__(self, ledger: LedgerService | None = None,
                  ai_pool: ConnectionPool | None = None,
-                 app_dsn: str | None = None, ai_url: str | None = None):
+                 app_dsn: str | None = None, ai_url: str | None = None,
+                 llm=None):
         self.ledger = ledger or LedgerService(dsn=app_dsn)
         self.ai_pool = ai_pool or make_pool(ai_url or ai_dsn())
+        self._llm = llm
+        self._categorizer = None
+
+    @property
+    def categorizer(self):
+        """Lazily built so importing/constructing the service needs no LLM creds
+        (a real client is only constructed the first time categorization runs)."""
+        if self._categorizer is None:
+            from .categorizer import Categorizer
+            llm = self._llm
+            if llm is None:
+                from .llm import AnthropicLLMClient
+                llm = AnthropicLLMClient()
+            self._categorizer = Categorizer(self.ledger, self.ai_pool, llm)
+        return self._categorizer
 
     def close(self) -> None:
         self.ai_pool.close()
@@ -87,9 +103,12 @@ class PolicyService:
     # ---- ingest + route ------------------------------------------------
     def ingest_transaction(self, org: str, *, day: str, amount_minor: int,
                            counterparty: str, description: str, direction: str,
-                           document: DocumentIn, proposal: ProposalIn,
+                           document: DocumentIn, proposal: Optional[ProposalIn] = None,
                            txn_id: Optional[str] = None, fraud_flags: tuple = (),
                            cash_account_code: str = "1000") -> dict:
+        """Ingest a normalized transaction and route it. If ``proposal`` is None,
+        the categorizer produces the AI proposal (pattern memory -> LLM fallback);
+        the system, not the model, decides pattern_match."""
         if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
             raise LedgerError("amounts are positive integer minor units")
         if direction not in ("inflow", "outflow"):
@@ -136,12 +155,31 @@ class PolicyService:
                      description, direction, list(fraud_flags)),
                 )
 
-                proposal_id = self._insert_proposal(org, tid, proposal)
+                # --- proposal: caller-supplied, or produced by the categorizer ---
+                if proposal is not None:
+                    proposal_id = self._insert_proposal(org, tid, proposal)
+                    p_account_code = proposal.account_code
+                    p_account_type = proposal.account_type
+                    p_rationale = proposal.rationale
+                    p_confidence = proposal.confidence
+                    p_pattern = proposal.pattern_match
+                    p_model = proposal.model_id
+                else:
+                    cat = self.categorizer.categorize(
+                        org, txn_id=tid, vendor=counterparty, description=description,
+                        content_sha256=content_sha)
+                    proposal_id = cat.proposal_id
+                    p_account_code = cat.account_code
+                    p_account_type = cat.account_type
+                    p_rationale = cat.rationale
+                    p_confidence = cat.confidence
+                    p_pattern = cat.pattern_match
+                    p_model = cat.model_id
 
                 # --- load prior persistent state ----------------------------
                 corr = conn.execute(
                     "SELECT corrected, decided FROM account_error_rates WHERE org_id=%s AND account_code=%s",
-                    (org, proposal.account_code),
+                    (org, p_account_code),
                 ).fetchone()
                 corrected, decided = (corr[0], corr[1]) if corr else (0, 0)
                 t = thresholds(error_rate(corrected, decided))
@@ -161,9 +199,8 @@ class PolicyService:
                 # --- decide -------------------------------------------------
                 txn = Txn(tid, day, amount_minor, counterparty, description, direction,
                           doc_id, tuple(fraud_flags))
-                prop = Proposal(tid, proposal.account_code, proposal.account_type,
-                                proposal.rationale, proposal.confidence, proposal.pattern_match,
-                                proposal.model_id)
+                prop = Proposal(tid, p_account_code, p_account_type,
+                                p_rationale, p_confidence, p_pattern, p_model)
                 d: Decision = decide(txn, prop, t, day_cum_before,
                                      month_auto_before, month_total_before)
 
@@ -190,7 +227,7 @@ class PolicyService:
                 if d.decision == AUTO_POST:
                     posted_entry_id = self._post_txn(conn, org, tid, day, description,
                                                      direction, amount_minor,
-                                                     proposal.account_code, doc_id,
+                                                     p_account_code, doc_id,
                                                      cash_account_code, "policy:auto_post")
                     status = "auto_posted"
                 else:
@@ -342,3 +379,69 @@ class PolicyService:
         return {"account_code": account_code, "corrected": corrected, "decided": decided,
                 "error_rate": error_rate(corrected, decided),
                 "effective_thresholds": thresholds(error_rate(corrected, decided))}
+
+    # ---- accuracy audit (Phase D) -------------------------------------
+    def accuracy_audit(self, org: str) -> dict:
+        """Compare AI proposals to human review decisions. Agreement = the human
+        approved the proposed account (action='approve'); a correction or
+        rejection is a disagreement."""
+        rows_sql = """
+            SELECT p.account_code AS proposed, p.pattern_match, p.source_layer,
+                   q.action, d.decision
+            FROM review_queue q
+            JOIN routing_decisions d ON d.decision_id = q.decision_id
+            JOIN proposals p         ON p.proposal_id = d.proposal_id
+            WHERE q.org_id=%s AND q.status='resolved'
+        """
+        with self.ledger.pool.connection() as conn:
+            rows = conn.execute(rows_sql, (org,)).fetchall()
+            # wrong auto-posts: an auto_post whose QA-sample review found it wrong.
+            wrong_auto = conn.execute(
+                """SELECT count(*) FROM review_queue q
+                   JOIN routing_decisions d ON d.decision_id=q.decision_id
+                   WHERE q.org_id=%s AND q.lane='qa_sample' AND q.status='resolved'
+                     AND q.action IN ('correct','reject') AND d.decision='auto_post'""",
+                (org,),
+            ).fetchone()[0]
+
+        def _bucket():
+            return {"agreements": 0, "total": 0}
+
+        per_account: dict[str, dict] = {}
+        per_pattern: dict[str, dict] = {}
+        agreements = total = 0
+        for proposed, pattern_match, _layer, action, _decision in rows:
+            agree = 1 if action == "approve" else 0
+            agreements += agree
+            total += 1
+            pa = per_account.setdefault(proposed, _bucket())
+            pa["agreements"] += agree
+            pa["total"] += 1
+            pp = per_pattern.setdefault(pattern_match, _bucket())
+            pp["agreements"] += agree
+            pp["total"] += 1
+
+        def _rate(b):
+            return round(b["agreements"] / b["total"], 4) if b["total"] else None
+
+        overall = round(agreements / total, 4) if total else None
+        GATE = 0.95
+        return {
+            "reviewed_count": total,
+            "overall_first_pass_agreement": overall,
+            "gate": GATE,
+            "meets_gate": (overall is not None and overall >= GATE),
+            "per_account": [
+                {"account_code": a, "agreement": _rate(b), **b}
+                for a, b in sorted(per_account.items())
+            ],
+            "per_pattern": [
+                {"pattern_match": p, "agreement": _rate(b), **b}
+                for p, b in sorted(per_pattern.items())
+            ],
+            "wrong_auto_posts": wrong_auto,
+            "wrong_auto_posts_note": (
+                "0 structurally: auto-post requires a 'seen' pattern-memory proposal "
+                "with confidence >= 0.97; LLM proposals are capped at 0.90 and novel "
+                "vendors never auto-post."),
+        }

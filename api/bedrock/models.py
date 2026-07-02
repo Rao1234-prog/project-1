@@ -95,7 +95,8 @@ class TransactionIn(BaseModel):
     description: str
     direction: str
     document: DocumentBody
-    proposal: ProposalBody
+    # Omit to let the categorizer produce the proposal (pattern memory -> LLM).
+    proposal: Optional[ProposalBody] = None
     txn_id: Optional[str] = None
     fraud_flags: list[str] = []
     cash_account_code: str = "1000"

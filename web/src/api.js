@@ -39,6 +39,7 @@ export const api = {
   checklist: (org, period) => req("GET", `/orgs/${org}/close/checklist?period=${period}`),
   trialBalance: (org) => req("GET", `/orgs/${org}/trial-balance`),
   verifyChain: (org) => req("GET", `/orgs/${org}/chain/verify`),
+  accuracy: (org) => req("GET", `/orgs/${org}/audit/accuracy`),
   review: (org, txnId, role, body) =>
     req("POST", `/orgs/${org}/transactions/${txnId}/reviews`, { role, body }),
   approveReconciliation: (org, role, body) =>
