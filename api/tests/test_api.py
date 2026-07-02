@@ -8,11 +8,24 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client(app_url, monkeypatch):
+def client(app_url, ai_url, monkeypatch):
     monkeypatch.setenv("BEDROCK_DATABASE_URL", app_url)
+    monkeypatch.setenv("BEDROCK_AI_URL", ai_url)
     from bedrock.main import app
     with TestClient(app) as c:
         yield c
+
+
+def _setup_org(client):
+    org = client.post("/orgs", json={"name": f"api-b-{uuid.uuid4()}"}).json()["org_id"]
+    for code, name, atype, nb in [("1000", "Cash", "asset", "debit"),
+                                  ("3000", "Equity", "equity", "credit"),
+                                  ("6100", "Fuel", "expense", "debit"),
+                                  ("5000", "Parts", "expense", "debit"),
+                                  ("2200", "Sales Tax Payable", "tax", "credit")]:
+        client.post(f"/orgs/{org}/accounts",
+                    json={"code": code, "name": name, "account_type": atype, "normal_balance": nb})
+    return org
 
 
 def test_api_end_to_end(client):
@@ -59,3 +72,46 @@ def test_api_end_to_end(client):
     prov = client.get(f"/orgs/{org}/entries/{entry['entry_id']}/provenance").json()["provenance"]
     assert len(prov) == 2
     assert {p["account"] for p in prov} == {"Cash", "Equity"}
+
+
+def test_transactions_and_reviews_api(client):
+    org = _setup_org(client)
+
+    # a controller-lane item (sensitive tax account) — not auto-posted
+    r = client.post(f"/orgs/{org}/transactions", json={
+        "day": "2026-05-01", "amount_minor": 5000, "counterparty": "TXComptroller",
+        "description": "sales tax", "direction": "outflow",
+        "document": {"doc_type": "bank_feed_line", "source_system": "plaid", "raw": "API-TAX-1"},
+        "proposal": {"account_code": "2200", "account_type": "tax", "rationale": "tax",
+                     "confidence": 0.99, "pattern_match": "seen"}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["decision"] == "controller_queue"
+    assert body["policy_version"] == "1.0.0"
+    assert "auto_post_min_confidence" in body["effective_thresholds"]
+    txn_id = body["txn_id"]
+
+    # idempotent re-pull of the same line
+    again = client.post(f"/orgs/{org}/transactions", json={
+        "day": "2026-05-01", "amount_minor": 5000, "counterparty": "TXComptroller",
+        "description": "sales tax", "direction": "outflow",
+        "document": {"doc_type": "bank_feed_line", "source_system": "plaid", "raw": "API-TAX-1"},
+        "proposal": {"account_code": "2200", "account_type": "tax", "rationale": "tax",
+                     "confidence": 0.99, "pattern_match": "seen"}})
+    assert again.json()["deduped"] is True
+
+    # a bookkeeper cannot clear the controller lane (403)
+    bad = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
+                      json={"action": "approve", "reviewer_id": "bk", "reviewer_role": "bookkeeper"})
+    assert bad.status_code == 403
+
+    # controller can
+    good = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
+                       json={"action": "approve", "reviewer_id": "ctrl", "reviewer_role": "controller"})
+    assert good.status_code == 200
+    assert good.json()["status"] == "resolved"
+
+    # queue now empty for that lane; ledger balanced + chain intact
+    assert client.get(f"/orgs/{org}/queue", params={"lane": "controller_queue"}).json()["queue"] == []
+    assert client.get(f"/orgs/{org}/trial-balance").json()["trial_balance"] == 0
+    assert client.get(f"/orgs/{org}/chain/verify").json()["verified"] is True

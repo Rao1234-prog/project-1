@@ -86,4 +86,36 @@ print(f"  chain re-verifies after restore : {s.verify_chain(org)}")
 s.pool.close()
 PY
 
+# Phase B summary is only meaningful when the AI role URL is available.
+if [ -n "${BEDROCK_AI_URL:-}" ]; then
+echo
+echo "== Phase B gate summary (Phase 1 simulation invariants) =="
+python3 - <<'PY'
+import os, uuid
+from bedrock.policy_service import PolicyService
+from bedrock.phase1_sim import load_coa, simulate
+from bedrock.policy import BASE
+
+p = PolicyService(app_dsn=os.environ["BEDROCK_DATABASE_URL"], ai_url=os.environ["BEDROCK_AI_URL"])
+org = p.ledger.ensure_org(f"GATE-B-{uuid.uuid4()}")
+load_coa(p.ledger, org)
+st = simulate(p, org, seed=42)
+r = st["routed"]
+
+hard_ok = all(d == "hard_stop" for a,b,d,amt,pat in st["audit"] if amt >= BASE["hard_stop_amount"])
+novel_ok = all(d != "auto_post" for a,b,d,amt,pat in st["audit"] if pat == "novel")
+
+print(f"  transactions processed          : {st['total']}")
+print(f"  routing  auto={r['auto_post']} bk={r['bookkeeper_queue']+r['bookkeeper_queue_lowconf']} "
+      f"ctrl={r['controller_queue']} hard={r['hard_stop']}")
+print(f"  wrong categorizations auto-posted: {st['auto_wrong']}   (must be 0)")
+print(f"  every >= $10,000 hard-stopped    : {hard_ok}")
+print(f"  every novel pattern queued       : {novel_ok}")
+print(f"  auto-post share                  : {st['auto_share']:.1%}   (cap {BASE['monthly_auto_post_share_cap']:.0%})")
+print(f"  trial balance                    : {st['trial_balance']}   (must be 0)")
+print(f"  chain verified                   : {st['chain_verified']}")
+p.close()
+PY
+fi
+
 exit $rc

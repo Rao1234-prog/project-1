@@ -63,3 +63,54 @@ class ReverseIn(BaseModel):
 
 class ClosePeriodIn(BaseModel):
     closed_by: str
+
+
+# ---- Phase B ---------------------------------------------------------------
+class ProposalBody(BaseModel):
+    account_code: str
+    account_type: str
+    rationale: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    pattern_match: str
+    model_id: str = "bedrock-cat-1"
+
+    @field_validator("pattern_match")
+    @classmethod
+    def _pm(cls, v: str) -> str:
+        if v not in ("seen", "similar", "novel"):
+            raise ValueError("pattern_match must be seen, similar, or novel")
+        return v
+
+
+class DocumentBody(BaseModel):
+    doc_type: str
+    source_system: str
+    raw: str
+
+
+class TransactionIn(BaseModel):
+    day: str                       # YYYY-MM-DD
+    amount_minor: int = Field(..., gt=0)
+    counterparty: str
+    description: str
+    direction: str
+    document: DocumentBody
+    proposal: ProposalBody
+    txn_id: Optional[str] = None
+    fraud_flags: list[str] = []
+    cash_account_code: str = "1000"
+
+    @field_validator("direction")
+    @classmethod
+    def _dir(cls, v: str) -> str:
+        if v not in ("inflow", "outflow"):
+            raise ValueError("direction must be inflow or outflow")
+        return v
+
+
+class ReviewIn(BaseModel):
+    action: str                    # approve | correct | reject
+    reviewer_id: str
+    reviewer_role: str             # bookkeeper | controller | admin
+    corrected_account_code: Optional[str] = None
+    cash_account_code: str = "1000"

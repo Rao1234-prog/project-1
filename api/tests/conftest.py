@@ -80,3 +80,28 @@ def seeded_org(service, org) -> str:
 def admin_conn(admin_url):
     with psycopg.connect(admin_url, autocommit=True) as conn:
         yield conn
+
+
+@pytest.fixture(scope="session")
+def ai_url() -> str:
+    url = os.environ.get("BEDROCK_AI_URL")
+    if not url:
+        pytest.skip("BEDROCK_AI_URL not set")
+    return url
+
+
+@pytest.fixture(scope="session")
+def policy(app_url, ai_url):
+    from bedrock.policy_service import PolicyService
+    ps = PolicyService(app_dsn=app_url, ai_url=ai_url)
+    yield ps
+    ps.close()
+
+
+@pytest.fixture
+def porg(policy) -> str:
+    """Fresh org with the full chart of accounts, wired to the policy service."""
+    org = policy.ledger.ensure_org(f"ptest-{uuid.uuid4()}")
+    for code, name, atype, nb in COA:
+        policy.ledger.add_account(org, code, name, atype, nb)
+    return org

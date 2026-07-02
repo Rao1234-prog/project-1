@@ -10,19 +10,24 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from .models import (AccountIn, ClosePeriodIn, DocumentIn, EntryIn, OrgIn, ReverseIn)
+from .models import (AccountIn, ClosePeriodIn, DocumentIn, EntryIn, OrgIn, ReviewIn,
+                     ReverseIn, TransactionIn)
+from .policy_service import (DocumentIn as PDoc, PolicyService, ProposalIn, PolicyError,
+                             Unauthorized)
 from .service import LedgerError, LedgerService, LineInput
 
 service: LedgerService | None = None
+policy: PolicyService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global service
-    service = LedgerService()
+    global service, policy
+    policy = PolicyService()
+    service = policy.ledger      # share the same ledger/app pool
     yield
-    if service and service.pool:
-        service.pool.close()
+    if policy:
+        policy.close()
 
 
 app = FastAPI(title="Bedrock Ledger", version="0.1.0", lifespan=lifespan)
@@ -31,6 +36,11 @@ app = FastAPI(title="Bedrock Ledger", version="0.1.0", lifespan=lifespan)
 def svc() -> LedgerService:
     assert service is not None
     return service
+
+
+def pol() -> PolicyService:
+    assert policy is not None
+    return policy
 
 
 @app.get("/health")
@@ -112,3 +122,45 @@ def account_balance(org: str, code: str):
 @app.get("/orgs/{org}/chain/verify")
 def verify_chain(org: str):
     return {"verified": svc().verify_chain(org)}
+
+
+# ---- Phase B: policy engine + review ---------------------------------------
+@app.post("/orgs/{org}/transactions")
+def ingest_transaction(org: str, body: TransactionIn):
+    try:
+        return pol().ingest_transaction(
+            org, day=body.day, amount_minor=body.amount_minor,
+            counterparty=body.counterparty, description=body.description,
+            direction=body.direction,
+            document=PDoc(body.document.doc_type, body.document.source_system, body.document.raw),
+            proposal=ProposalIn(body.proposal.account_code, body.proposal.account_type,
+                                body.proposal.rationale, body.proposal.confidence,
+                                body.proposal.pattern_match, body.proposal.model_id),
+            txn_id=body.txn_id, fraud_flags=tuple(body.fraud_flags),
+            cash_account_code=body.cash_account_code)
+    except LedgerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.post("/orgs/{org}/transactions/{txn_id}/reviews")
+def submit_review(org: str, txn_id: str, body: ReviewIn):
+    try:
+        return pol().submit_review(
+            org, txn_id, action=body.action, reviewer_id=body.reviewer_id,
+            reviewer_role=body.reviewer_role,
+            corrected_account_code=body.corrected_account_code,
+            cash_account_code=body.cash_account_code)
+    except Unauthorized as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except (PolicyError, LedgerError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/orgs/{org}/queue")
+def get_queue(org: str, lane: str | None = None):
+    return {"queue": pol().queue(org, lane)}
+
+
+@app.get("/orgs/{org}/accounts/{code}/error-rate")
+def account_error(org: str, code: str):
+    return pol().account_error(org, code)

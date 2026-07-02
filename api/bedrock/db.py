@@ -18,6 +18,15 @@ def app_dsn() -> str:
     return dsn
 
 
+def ai_dsn() -> str:
+    """DSN for the proposals-only ``bedrock_ai`` role. Proposal writes go through
+    this connection, so the AI's write scope is enforced by the database."""
+    dsn = os.environ.get("BEDROCK_AI_URL")
+    if not dsn:
+        raise RuntimeError("BEDROCK_AI_URL is not set")
+    return dsn
+
+
 def _configure(conn) -> None:
     # Autocommit so an explicit ``with conn.transaction()`` is a real top-level
     # BEGIN/COMMIT. That matters: the balance check and hash-chain link are a

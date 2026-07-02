@@ -236,6 +236,40 @@ class LedgerService:
             "reverses": str(row[6]) if row[6] else None,
         }
 
+    def insert_entry_on_conn(self, conn, org: str, entry_date: date, entry_type: str,
+                             memo: str, lines: list[LineInput], posted_by_policy: str,
+                             reverses: Optional[str] = None) -> str:
+        """Insert an entry + lines on a caller-supplied connection, returning the
+        entry_id. The caller owns the transaction; the deferred balance and
+        hash-chain triggers fire at the caller's COMMIT. Used by the policy engine
+        so a routing decision and its auto-post land atomically.
+        """
+        if entry_type not in ENTRY_TYPES:
+            raise LedgerError("bad entry_type")
+        if not lines:
+            raise LedgerError("empty entry")
+        for ln in lines:
+            ln.validate()
+        code_to_id = self._account_ids(conn, org, [l.account_code for l in lines])
+        eid = conn.execute(
+            """INSERT INTO journal_entries
+                 (org_id, entry_date, entry_type, memo, posted_by_policy, reverses)
+               VALUES (%s,%s,%s,%s,%s,%s) RETURNING entry_id""",
+            (org, entry_date, entry_type, memo, posted_by_policy, reverses),
+        ).fetchone()[0]
+        with conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO journal_lines
+                     (entry_id, org_id, account_id, side, amount_minor, doc_id, txn_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                [(eid, org, code_to_id[l.account_code], l.side, l.amount_minor, l.doc_id, l.txn_id)
+                 for l in lines],
+            )
+        debits = sum(l.amount_minor for l in lines if l.side == "debit")
+        self._log(conn, org, posted_by_policy, "post_entry", str(eid),
+                  {"type": entry_type, "dr": debits, "memo": memo[:60]})
+        return str(eid)
+
     def reverse(self, org: str, entry_id: str, entry_date: date, memo: str, by: str) -> dict:
         with self.pool.connection() as conn:
             orig = conn.execute(

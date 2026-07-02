@@ -12,8 +12,10 @@ AI_PW="${BEDROCK_AI_PASSWORD:-ai_secret}"
 
 PSQL=(psql -v ON_ERROR_STOP=1 -q -v "app_pw=${APP_PW}" -v "ai_pw=${AI_PW}")
 
-for f in 01_extensions 02_roles 03_schema 04_grants; do
-  echo "  applying ${f}.sql"
-  "${PSQL[@]}" -f "${DIR}/${f}.sql"
+# Apply every db/sql/*.sql in lexical order (01_, 02_, ... 05_phase_b, ...).
+shopt -s nullglob
+for f in "${DIR}"/*.sql; do
+  echo "  applying $(basename "${f}")"
+  "${PSQL[@]}" -f "${f}"
 done
 echo "  schema applied."
