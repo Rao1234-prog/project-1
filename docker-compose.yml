@@ -1,0 +1,41 @@
+# Bedrock — Phase A infrastructure.
+# Postgres 16 with the Section 1.2 schema applied on first init: deferred
+# balance-check trigger, period-lock trigger, revoked UPDATE/DELETE on the
+# journal tables, the per-org hash chain, and the role grants that make the AI
+# a proposals-only writer.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bedrock
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bedrock}
+      POSTGRES_DB: bedrock
+      BEDROCK_APP_PASSWORD: ${BEDROCK_APP_PASSWORD:-app_secret}
+      BEDROCK_AI_PASSWORD: ${BEDROCK_AI_PASSWORD:-ai_secret}
+    ports:
+      - "${BEDROCK_DB_PORT:-5432}:5432"
+    volumes:
+      - ./db/sql:/bedrock-db/sql:ro
+      - ./db/apply.sh:/bedrock-db/apply.sh:ro
+      - ./db/docker-initdb:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bedrock -d bedrock"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Service layer connects as the append-only app role, never as superuser.
+      BEDROCK_DATABASE_URL: postgresql://bedrock_app:${BEDROCK_APP_PASSWORD:-app_secret}@db:5432/bedrock
+      BEDROCK_AI_URL: postgresql://bedrock_ai:${BEDROCK_AI_PASSWORD:-ai_secret}@db:5432/bedrock
+    ports:
+      - "${BEDROCK_API_PORT:-8000}:8000"
+
+volumes:
+  pgdata: {}
