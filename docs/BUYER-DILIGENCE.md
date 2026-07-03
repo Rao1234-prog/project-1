@@ -126,11 +126,12 @@ is in `scripts/pg_local.sh` and the README.)
 - **No bank feeds / no external financial integrations.** No Plaid, no
   QBO/Xero, no processor settlement un-netting. Ingestion is modeled close to
   one-line-per-document (see deferred item D3).
-- **The live-LLM path needs the Anthropic SDK, which is not pinned.**
-  `api/greenledger/llm.py` imports `anthropic` lazily; it is **not** in
-  `api/requirements.txt`. The tests mock it, so the gate passes without it, but
-  running the *real* categorizer requires `pip install anthropic` and an API
-  key. Easy to fix; disclosed so it is not a surprise.
+- **The live-LLM path needs the Anthropic SDK (now pinned) and an API key.**
+  `api/greenledger/llm.py` imports `anthropic` lazily. It is pinned in
+  `api/requirements.txt` as `anthropic==0.115.1` — the version the code targets
+  (its `messages.create(..., output_config=...)` structured-output call). The
+  tests mock the client, so the gate needs no network or key; running the *real*
+  categorizer additionally requires an `ANTHROPIC_API_KEY`.
 - **No SOC 2, no security audit, no compliance certification** of any kind.
 - **Legal / CPA-of-record / compliance structure is research only.** The
   spec describes an accountability model; **none of it is implemented or
@@ -171,3 +172,22 @@ These estimates are the seller's engineering judgment, not commitments.
 4. Commission independent **security**, **license/OSS-compliance**, and (if
    operating as a bookkeeping service) **accounting/regulatory** review — none
    of which the seller has performed.
+
+---
+
+## 9. Development provenance
+
+GreenLedger was built **AI-assisted, using Claude Code**, under **human-gated
+phases**: the seller directed and reviewed the work, and each phase (A–D, plus
+the spec-conformance pass) advanced only after an explicit human gate. This is
+disclosed openly rather than hidden. The evidence is in the artifact itself —
+the full Git history transfers with the repository and records the phase-by-phase
+build, the deviation and conformance decisions, and the test gates run at each
+step (the same 57-test suite and CI that a buyer can re-run today). Commit
+messages carry AI co-authorship trailers and links to the seller's private build
+sessions; those session links resolve only for the authenticated seller account
+(an unauthenticated visitor receives **HTTP 403** and sees no content), so they
+expose no conversation content to a third party who clicks them. AI assistance
+does not diminish the transfer: the seller holds and conveys the rights in the
+resulting work per the assignment agreement, and the buyer should still perform
+the independent reviews in §8.

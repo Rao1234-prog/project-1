@@ -125,3 +125,22 @@ in the working tree or history (see the sweep report). If the buyer requires a
 name-clean or provenance-clean history, a history rewrite is a separate,
 destructive operation that must be agreed before delivery — it is **not**
 performed in this package, which preserves history intact.
+
+The commit history was **retained intact by mutual decision** as part of the
+asset (it documents the phase-gated build and test evolution). Development
+provenance — the work was built AI-assisted under human-gated phases — is
+disclosed in `docs/BUYER-DILIGENCE.md` §9. The `Claude-Session` links in commit
+trailers resolve only for the authenticated seller account; an unauthenticated
+visitor receives HTTP 403 and sees no conversation content.
+
+---
+
+## E. Transfer terms — seller-retained rights
+
+Notwithstanding the outright assignment of the Assets, the **Seller retains the
+right to reference, describe, and display non-confidential aspects of the work
+(including screenshots and architecture) for portfolio and professional purposes
+after transfer.** This retained right is limited to non-confidential material and
+does not include the right to resell, relicense, or operate the Assets. It should
+be reflected as an explicit carve-out in the assignment agreement
+(`docs/IP-ASSIGNMENT-DRAFT.md`).
