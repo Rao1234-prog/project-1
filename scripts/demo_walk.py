@@ -16,10 +16,10 @@ import sys
 
 import httpx
 
-BASE = os.environ.get("BEDROCK_API_URL", "http://127.0.0.1:8000")
+BASE = os.environ.get("GREENLEDGER_API_URL", "http://127.0.0.1:8000")
 PERIOD = "2026-06"
-BK = {"X-Bedrock-Role": "bookkeeper"}
-CTRL = {"X-Bedrock-Role": "controller"}
+BK = {"X-GreenLedger-Role": "bookkeeper"}
+CTRL = {"X-GreenLedger-Role": "controller"}
 HERE = os.path.dirname(__file__)
 
 step = 0

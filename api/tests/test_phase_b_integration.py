@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from bedrock.policy_service import DocumentIn, PolicyService, ProposalIn, Unauthorized
+from greenledger.policy_service import DocumentIn, PolicyService, ProposalIn, Unauthorized
 
 
 def _ingest(policy, org, *, day, amount, cp, code, atype, pattern, conf,

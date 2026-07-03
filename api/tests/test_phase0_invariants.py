@@ -9,7 +9,7 @@ from datetime import date
 
 import pytest
 
-from bedrock.service import LedgerError, LineInput
+from greenledger.service import LedgerError, LineInput
 
 
 def _doc(service, org, raw="doc"):

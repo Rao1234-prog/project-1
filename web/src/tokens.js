@@ -1,5 +1,5 @@
-/* Bedrock design tokens — the single source of truth for palette + type roles.
-   Ported verbatim from bedrock-app.jsx (ledger-paper direction). Do not inline
+/* GreenLedger design tokens — the single source of truth for palette + type roles.
+   Ported verbatim from greenledger-app.jsx (ledger-paper direction). Do not inline
    colors or fonts elsewhere; import from here. */
 export const T = {
   paper: "#F7F5EE",

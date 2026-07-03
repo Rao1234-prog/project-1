@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import uuid
 
-from bedrock.phase1_sim import load_coa, simulate
-from bedrock.policy import BASE
+from greenledger.phase1_sim import load_coa, simulate
+from greenledger.policy import BASE
 
 
 def test_phase1_simulation_invariants(policy):
@@ -44,7 +44,7 @@ def test_phase1_simulation_invariants(policy):
 
 
 def _force_cumulative_cap(policy, org) -> bool:
-    from bedrock.policy_service import DocumentIn, ProposalIn
+    from greenledger.policy_service import DocumentIn, ProposalIn
     decisions = []
     for i in range(6):
         r = policy.ingest_transaction(

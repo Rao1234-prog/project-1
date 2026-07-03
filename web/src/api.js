@@ -1,4 +1,4 @@
-/* Thin API client. The acting role is sent as X-Bedrock-Role on every request
+/* Thin API client. The acting role is sent as X-GreenLedger-Role on every request
    (the server boundary enforces authorization). Errors are thrown as ApiError
    with the parsed detail so the UI can surface *what went wrong and what to do*
    — a 409 carries the blocking findings, a 403 carries the required role. */
@@ -14,7 +14,7 @@ export class ApiError extends Error {
 
 async function req(method, path, { role, body } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (role) headers["X-Bedrock-Role"] = role;
+  if (role) headers["X-GreenLedger-Role"] = role;
   let res;
   try {
     res = await fetch(BASE + path, {

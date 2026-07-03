@@ -1,4 +1,4 @@
-"""Bedrock ledger engine — persistent service layer (Phase A).
+"""GreenLedger ledger engine — persistent service layer (Phase A).
 
 A faithful reimplementation of the validated ``ledger.py`` prototype over the
 Postgres schema in ``db/sql``. The behavioral contract is identical; the
@@ -14,7 +14,7 @@ difference is *where* each invariant lives:
     int amounts by dataclass check     BIGINT + CHECK (amount_minor > 0)
 
 No AI anywhere in this module (the AI writes only to the ``proposals`` table,
-and only via the ``bedrock_ai`` role).
+and only via the ``greenledger_ai`` role).
 """
 from __future__ import annotations
 

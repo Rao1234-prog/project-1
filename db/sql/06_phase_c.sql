@@ -1,4 +1,4 @@
--- Bedrock — Phase C schema: bank reconciliation approvals.
+-- GreenLedger — Phase C schema: bank reconciliation approvals.
 --
 -- A close cannot be approved until every reconciliation-required account has an
 -- approved reconciliation for the period. The check is computed server-side
@@ -13,4 +13,4 @@ CREATE TABLE reconciliations (
   PRIMARY KEY (org_id, account_code, period_key)
 );
 
-GRANT SELECT, INSERT, UPDATE ON reconciliations TO bedrock_app;
+GRANT SELECT, INSERT, UPDATE ON reconciliations TO greenledger_app;

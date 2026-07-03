@@ -1,5 +1,5 @@
 """
-Bedrock ledger engine — Phase 0.
+GreenLedger ledger engine — Phase 0.
 Deterministic double-entry core. No AI anywhere in this module (brief §4.2 stage 4).
 
 Invariants enforced:

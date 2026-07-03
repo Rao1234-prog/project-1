@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bedrock ./bedrock
+COPY greenledger ./greenledger
 
 EXPOSE 8000
-CMD ["uvicorn", "bedrock.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "greenledger.main:app", "--host", "0.0.0.0", "--port", "8000"]

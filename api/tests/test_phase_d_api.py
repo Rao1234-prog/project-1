@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-BK = {"X-Bedrock-Role": "bookkeeper"}
+BK = {"X-GreenLedger-Role": "bookkeeper"}
 
 
 def _tx(client, org, *, vendor, raw, day="2026-06-10", amount=4000, proposal=None):
@@ -68,8 +68,8 @@ def test_accuracy_audit_endpoint(client, api_org):
 def test_live_llm_smoke(policy, porg):
     """Real Anthropic call. Skipped unless explicitly enabled. Asserts the LLM
     fallback yields a novel proposal capped at 0.90."""
-    from bedrock.categorizer import Categorizer, LLM_CONFIDENCE_CAP
-    from bedrock.llm import AnthropicLLMClient
+    from greenledger.categorizer import Categorizer, LLM_CONFIDENCE_CAP
+    from greenledger.llm import AnthropicLLMClient
     cat = Categorizer(policy.ledger, policy.ai_pool, AnthropicLLMClient())
     res = cat.categorize(porg, txn_id="live1", vendor="Shell Fuel Station",
                          description="diesel fuel for fleet truck",

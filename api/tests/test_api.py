@@ -84,13 +84,13 @@ def test_transactions_and_reviews_api(client, api_org):
 
     # a bookkeeper cannot clear the controller lane (403) — role from header
     bad = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
-                      headers={"X-Bedrock-Role": "bookkeeper"},
+                      headers={"X-GreenLedger-Role": "bookkeeper"},
                       json={"action": "approve", "reviewer_id": "bk"})
     assert bad.status_code == 403
 
     # controller can
     good = client.post(f"/orgs/{org}/transactions/{txn_id}/reviews",
-                       headers={"X-Bedrock-Role": "controller"},
+                       headers={"X-GreenLedger-Role": "controller"},
                        json={"action": "approve", "reviewer_id": "ctrl"})
     assert good.status_code == 200
     assert good.json()["status"] == "resolved"

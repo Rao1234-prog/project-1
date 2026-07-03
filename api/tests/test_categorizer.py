@@ -9,9 +9,9 @@ import uuid
 
 import pytest
 
-from bedrock.categorizer import Categorizer, LLM_CONFIDENCE_CAP
-from bedrock.llm import LLMResponse
-from bedrock.policy_service import DocumentIn, ProposalIn
+from greenledger.categorizer import Categorizer, LLM_CONFIDENCE_CAP
+from greenledger.llm import LLMResponse
+from greenledger.policy_service import DocumentIn, ProposalIn
 
 
 class MockLLM:

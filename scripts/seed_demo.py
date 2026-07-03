@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed the June 2026 demo state from bedrock-app.jsx via the service layer.
+"""Seed the June 2026 demo state from greenledger-app.jsx via the service layer.
 
 Reproduces Cardinal Heating & Air's demo so the app opens with real content:
 the chart of accounts, the source documents, the posted June entries (each with
@@ -9,7 +9,7 @@ renders), and the six open review-queue items with their exact routing reasons.
 Idempotent: re-running is a no-op unless --reset is passed (which clears the
 org's transactional data first). Amounts are integer cents throughout.
 
-Env: BEDROCK_DATABASE_URL, BEDROCK_AI_URL, and (for --reset) BEDROCK_ADMIN_URL.
+Env: GREENLEDGER_DATABASE_URL, GREENLEDGER_AI_URL, and (for --reset) GREENLEDGER_ADMIN_URL.
 """
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 import psycopg
 from psycopg.types.json import Jsonb
 
-from bedrock.policy import BASE, POLICY_VERSION
-from bedrock.policy_service import PolicyService, ProposalIn
-from bedrock.service import LineInput, _sha256
+from greenledger.policy import BASE, POLICY_VERSION
+from greenledger.policy_service import PolicyService, ProposalIn
+from greenledger.service import LineInput, _sha256
 
 ORG_NAME = "Cardinal Heating & Air LLC"
 
@@ -67,7 +67,7 @@ DOCS = {
     "rev1": ("Processor settlement", "Stripe", "06/05 payout 6,240.00 · 11 residential service calls, fee detail attached"),
     "rev2": ("Processor settlement", "Stripe", "06/12 payout 8,912.00 · 14 residential service calls, fee detail attached"),
     "ins":  ("ACH record", "Plaid", "06/03 STATE FARM COMM POLICY · 610.00"),
-    "deps": ("Schedule", "Bedrock engine", "Fleet depreciation · 3 trucks · SL 60 mo · June 1,450.00 · schedule replayable"),
+    "deps": ("Schedule", "GreenLedger engine", "Fleet depreciation · 3 trucks · SL 60 mo · June 1,450.00 · schedule replayable"),
     "accr": ("Invoice (OCR)", "Email ingest", "Johnstone Supply · inv #5561 · received 06/28, unpaid at close · 2,208.50"),
 }
 
@@ -170,7 +170,7 @@ def already_seeded(policy, org) -> bool:
 
 
 def reset_org(org_name: str) -> None:
-    admin = os.environ["BEDROCK_ADMIN_URL"]
+    admin = os.environ["GREENLEDGER_ADMIN_URL"]
     with psycopg.connect(admin, autocommit=True) as conn:
         row = conn.execute("SELECT org_id FROM orgs WHERE legal_name=%s", (org_name,)).fetchone()
         if not row:

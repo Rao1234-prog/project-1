@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from bedrock.service import LineInput
+from greenledger.service import LineInput
 
 
 def test_seeded_phase0_run(service, seeded_org):

@@ -1,4 +1,4 @@
--- Bedrock — Phase D schema: replayable categorization provenance.
+-- GreenLedger — Phase D schema: replayable categorization provenance.
 --
 -- Every proposal records which layer produced it, the prompt template version,
 -- a hash of the exact prompt, the raw model response, and the source-document
@@ -15,5 +15,5 @@ ALTER TABLE proposals
 CREATE INDEX IF NOT EXISTS idx_proposals_content ON proposals(org_id, content_sha256);
 
 -- Table-level grants from 04/05 already cover the new columns:
---   bedrock_ai  : INSERT, SELECT on proposals   (writes proposals only)
---   bedrock_app : SELECT on proposals           (reads, never writes)
+--   greenledger_ai  : INSERT, SELECT on proposals   (writes proposals only)
+--   greenledger_app : SELECT on proposals           (reads, never writes)

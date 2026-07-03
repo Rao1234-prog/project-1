@@ -1,4 +1,4 @@
-"""Bedrock policy engine — pure routing logic (Phase B).
+"""GreenLedger policy engine — pure routing logic (Phase B).
 
 A faithful, side-effect-free port of the routing core in the ``policy.py``
 prototype. The prototype mutated in-memory dicts; here ``decide()`` takes the
@@ -43,7 +43,7 @@ class Proposal:
     rationale: str
     confidence: float
     pattern_match: str            # seen | similar | novel
-    model_id: str = "bedrock-cat-1"
+    model_id: str = "greenledger-cat-1"
     is_sensitive: bool = False    # account carries policy sensitivity (spec: touches_equity_or_tax)
 
 

@@ -11,7 +11,7 @@ from datetime import date
 import psycopg
 import pytest
 
-from bedrock.service import LineInput
+from greenledger.service import LineInput
 
 
 def _posted_entry(service, org):
@@ -90,9 +90,9 @@ def test_two_simultaneous_unbalanced_inserts_both_fail(service, seeded_org, app_
 # --- throughline constraint: the AI role may write ONLY proposals ----------
 def test_ai_role_cannot_write_ledger(service, seeded_org):
     import os
-    ai_url = os.environ.get("BEDROCK_AI_URL")
+    ai_url = os.environ.get("GREENLEDGER_AI_URL")
     if not ai_url:
-        pytest.skip("BEDROCK_AI_URL not set")
+        pytest.skip("GREENLEDGER_AI_URL not set")
     org = seeded_org
     with psycopg.connect(ai_url, autocommit=True) as conn:
         with pytest.raises(psycopg.errors.InsufficientPrivilege):

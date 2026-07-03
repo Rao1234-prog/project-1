@@ -1,8 +1,8 @@
-"""Shared pytest fixtures for the Bedrock ledger tests.
+"""Shared pytest fixtures for the GreenLedger ledger tests.
 
 Requires a running Postgres with the schema applied and two env vars:
-    BEDROCK_DATABASE_URL  -> the append-only bedrock_app role (service layer)
-    BEDROCK_ADMIN_URL     -> superuser, used only to simulate direct-SQL tampering
+    GREENLEDGER_DATABASE_URL  -> the append-only greenledger_app role (service layer)
+    GREENLEDGER_ADMIN_URL     -> superuser, used only to simulate direct-SQL tampering
 `scripts/run_gate.sh` sets both up automatically.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import uuid
 import psycopg
 import pytest
 
-from bedrock.service import LedgerService
+from greenledger.service import LedgerService
 
 # Cardinal Heating & Air chart of accounts (from run_phases.py).
 COA = [
@@ -49,17 +49,17 @@ def load_coa(ledger, org):
 
 @pytest.fixture(scope="session")
 def app_url() -> str:
-    url = os.environ.get("BEDROCK_DATABASE_URL")
+    url = os.environ.get("GREENLEDGER_DATABASE_URL")
     if not url:
-        pytest.skip("BEDROCK_DATABASE_URL not set")
+        pytest.skip("GREENLEDGER_DATABASE_URL not set")
     return url
 
 
 @pytest.fixture(scope="session")
 def admin_url() -> str:
-    url = os.environ.get("BEDROCK_ADMIN_URL")
+    url = os.environ.get("GREENLEDGER_ADMIN_URL")
     if not url:
-        pytest.skip("BEDROCK_ADMIN_URL not set")
+        pytest.skip("GREENLEDGER_ADMIN_URL not set")
     return url
 
 
@@ -91,15 +91,15 @@ def admin_conn(admin_url):
 
 @pytest.fixture(scope="session")
 def ai_url() -> str:
-    url = os.environ.get("BEDROCK_AI_URL")
+    url = os.environ.get("GREENLEDGER_AI_URL")
     if not url:
-        pytest.skip("BEDROCK_AI_URL not set")
+        pytest.skip("GREENLEDGER_AI_URL not set")
     return url
 
 
 @pytest.fixture(scope="session")
 def policy(app_url, ai_url):
-    from bedrock.policy_service import PolicyService
+    from greenledger.policy_service import PolicyService
     ps = PolicyService(app_dsn=app_url, ai_url=ai_url)
     yield ps
     ps.close()
@@ -116,10 +116,10 @@ def porg(policy) -> str:
 @pytest.fixture
 def client(app_url, ai_url, monkeypatch):
     """FastAPI TestClient wired to the running database."""
-    monkeypatch.setenv("BEDROCK_DATABASE_URL", app_url)
-    monkeypatch.setenv("BEDROCK_AI_URL", ai_url)
+    monkeypatch.setenv("GREENLEDGER_DATABASE_URL", app_url)
+    monkeypatch.setenv("GREENLEDGER_AI_URL", ai_url)
     from fastapi.testclient import TestClient
-    from bedrock.main import app
+    from greenledger.main import app
     with TestClient(app) as c:
         yield c
 

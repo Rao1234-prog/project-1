@@ -3,8 +3,8 @@ client cannot force a close), and role-403 (server-side lane authorization).
 """
 from __future__ import annotations
 
-BK = {"X-Bedrock-Role": "bookkeeper"}
-CTRL = {"X-Bedrock-Role": "controller"}
+BK = {"X-GreenLedger-Role": "bookkeeper"}
+CTRL = {"X-GreenLedger-Role": "controller"}
 
 
 def _tx(client, org, *, day, amount, cp, code, atype, pattern, conf, direction="outflow", raw=None):

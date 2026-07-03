@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from bedrock.policy_service import DocumentIn, ProposalIn
+from greenledger.policy_service import DocumentIn, ProposalIn
 
 
 def _ingest(policy, org, *, raw, cp="Repeaty Vendor", code="6100"):

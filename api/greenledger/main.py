@@ -1,7 +1,7 @@
-"""Bedrock FastAPI — Phase A: the persistent ledger engine over Postgres.
+"""GreenLedger FastAPI — Phase A: the persistent ledger engine over Postgres.
 
 Every write goes through LedgerService, which connects as the append-only
-``bedrock_app`` role. The database, not this process, is the source of truth for
+``greenledger_app`` role. The database, not this process, is the source of truth for
 balance, immutability, provenance, the hash chain, and period locks.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
         policy.close()
 
 
-app = FastAPI(title="Bedrock Ledger", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="GreenLedger Ledger", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,13 +61,13 @@ def closer() -> CloseService:
     return close_svc
 
 
-def require_role(x_bedrock_role: Optional[str] = Header(default=None)) -> str:
-    """The acting role comes from the server boundary (the X-Bedrock-Role header
+def require_role(x_greenledger_role: Optional[str] = Header(default=None)) -> str:
+    """The acting role comes from the server boundary (the X-GreenLedger-Role header
     the UI's 'acting as' switcher sets), never from the request body."""
-    if not x_bedrock_role or x_bedrock_role not in VALID_ROLES:
+    if not x_greenledger_role or x_greenledger_role not in VALID_ROLES:
         raise HTTPException(status_code=400,
-                            detail=f"X-Bedrock-Role header required (one of {sorted(VALID_ROLES)})")
-    return x_bedrock_role
+                            detail=f"X-GreenLedger-Role header required (one of {sorted(VALID_ROLES)})")
+    return x_greenledger_role
 
 
 @app.get("/health")
@@ -185,9 +185,9 @@ def audit_accuracy(org: str):
 
 @app.post("/orgs/{org}/transactions/{txn_id}/reviews")
 def submit_review(org: str, txn_id: str, body: ReviewIn,
-                  x_bedrock_role: Optional[str] = Header(default=None)):
+                  x_greenledger_role: Optional[str] = Header(default=None)):
     # The authoritative role is the server boundary header, not the body.
-    role = require_role(x_bedrock_role)
+    role = require_role(x_greenledger_role)
     try:
         return pol().submit_review(
             org, txn_id, action=body.action, reviewer_id=body.reviewer_id,
@@ -238,8 +238,8 @@ def audit(org: str, limit: int = 100, offset: int = 0):
 
 @app.post("/orgs/{org}/reconciliations/approve")
 def approve_reconciliation(org: str, body: ReconApproveIn,
-                           x_bedrock_role: Optional[str] = Header(default=None)):
-    role = require_role(x_bedrock_role)
+                           x_greenledger_role: Optional[str] = Header(default=None)):
+    role = require_role(x_greenledger_role)
     if role != "controller":
         raise HTTPException(status_code=403,
                             detail={"error": "approving a reconciliation requires controller",
@@ -255,8 +255,8 @@ def close_checklist(org: str, period: str):
 
 @app.post("/orgs/{org}/close/approve")
 def close_approve(org: str, body: CloseApproveIn,
-                  x_bedrock_role: Optional[str] = Header(default=None)):
-    role = require_role(x_bedrock_role)
+                  x_greenledger_role: Optional[str] = Header(default=None)):
+    role = require_role(x_greenledger_role)
     if role != "controller":
         raise HTTPException(status_code=403,
                             detail={"error": "approving a close requires controller",

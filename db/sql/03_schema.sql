@@ -1,4 +1,4 @@
--- Bedrock — Phase A schema, part 3: tables, functions, triggers
+-- GreenLedger — Phase A schema, part 3: tables, functions, triggers
 -- Section 1.2 data model. All amounts are integer minor units (BIGINT cents).
 --
 -- Invariants enforced HERE (by the schema, not by application code):
@@ -103,7 +103,7 @@ CREATE TABLE proposals (
   rationale     text NOT NULL,
   confidence    numeric(5,4) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
   pattern_match text NOT NULL CHECK (pattern_match IN ('seen','similar','novel')),
-  model_id      text NOT NULL DEFAULT 'bedrock-cat-1',
+  model_id      text NOT NULL DEFAULT 'greenledger-cat-1',
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 

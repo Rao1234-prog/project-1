@@ -1,5 +1,5 @@
 """
-Bedrock policy engine — Phase 1 trust boundary (brief §5, Deliverable 2).
+GreenLedger policy engine — Phase 1 trust boundary (brief §5, Deliverable 2).
 Deterministic router. The AI proposes; only this module may authorize an auto-post.
 """
 from dataclasses import dataclass, field
@@ -26,7 +26,7 @@ SENSITIVE_TYPES = {"equity", "tax"}   # never bookkeeper-level auto decisions
 class Proposal:
     txn_id: str; account_code: str; account_type: str
     rationale: str; confidence: float; pattern_match: str  # seen|similar|novel
-    model_id: str = "bedrock-cat-1"
+    model_id: str = "greenledger-cat-1"
 
 @dataclass
 class Txn:

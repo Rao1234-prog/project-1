@@ -23,20 +23,20 @@ if [ "${USE_DOCKER}" = "1" ]; then
   docker compose up -d db
   # wait for health
   for _ in $(seq 1 30); do
-    if docker compose exec -T db pg_isready -U bedrock -d bedrock >/dev/null 2>&1; then break; fi
+    if docker compose exec -T db pg_isready -U greenledger -d greenledger >/dev/null 2>&1; then break; fi
     sleep 1
   done
-  PORT="${BEDROCK_DB_PORT:-5432}"
-  export BEDROCK_ADMIN_URL="postgresql://bedrock:${POSTGRES_PASSWORD:-bedrock}@127.0.0.1:${PORT}/bedrock"
-  export BEDROCK_DATABASE_URL="postgresql://bedrock_app:${BEDROCK_APP_PASSWORD:-app_secret}@127.0.0.1:${PORT}/bedrock"
-  export BEDROCK_AI_URL="postgresql://bedrock_ai:${BEDROCK_AI_PASSWORD:-ai_secret}@127.0.0.1:${PORT}/bedrock"
+  PORT="${GREENLEDGER_DB_PORT:-5432}"
+  export GREENLEDGER_ADMIN_URL="postgresql://greenledger:${POSTGRES_PASSWORD:-greenledger}@127.0.0.1:${PORT}/greenledger"
+  export GREENLEDGER_DATABASE_URL="postgresql://greenledger_app:${GREENLEDGER_APP_PASSWORD:-app_secret}@127.0.0.1:${PORT}/greenledger"
+  export GREENLEDGER_AI_URL="postgresql://greenledger_ai:${GREENLEDGER_AI_PASSWORD:-ai_secret}@127.0.0.1:${PORT}/greenledger"
 else
   echo "== docker registry unavailable; using local postgres-16 cluster (clean reset) =="
   bash scripts/pg_local.sh reset >/dev/null
   eval "$(bash scripts/pg_local.sh env)"
 fi
 
-echo "  BEDROCK_DATABASE_URL=${BEDROCK_DATABASE_URL}"
+echo "  GREENLEDGER_DATABASE_URL=${GREENLEDGER_DATABASE_URL}"
 echo
 echo "== running pytest =="
 cd "${ROOT}/api"
@@ -48,9 +48,9 @@ echo "== gate summary =="
 python3 - <<'PY'
 import os
 from datetime import date
-from bedrock.service import LedgerService, LineInput
+from greenledger.service import LedgerService, LineInput
 
-s = LedgerService(dsn=os.environ["BEDROCK_DATABASE_URL"])
+s = LedgerService(dsn=os.environ["GREENLEDGER_DATABASE_URL"])
 org = s.ensure_org("GATE Cardinal Heating & Air LLC")
 # fresh COA (ignore duplicates from a prior run)
 COA = [("1000","Operating Checking","asset","debit"),("3000","Owner's Equity","equity","credit"),
@@ -75,11 +75,11 @@ print(f"  chain verification             : {s.verify_chain(org)}")
 # direct SQL tampering is detected
 import psycopg
 victim = None
-with psycopg.connect(os.environ["BEDROCK_ADMIN_URL"], autocommit=True) as c:
+with psycopg.connect(os.environ["GREENLEDGER_ADMIN_URL"], autocommit=True) as c:
     victim = c.execute("SELECT entry_id, memo FROM journal_entries WHERE org_id=%s ORDER BY chain_seq LIMIT 1",(org,)).fetchone()
     c.execute("UPDATE journal_entries SET memo='TAMPERED' WHERE entry_id=%s",(victim[0],))
 detected = (s.verify_chain(org) is False)
-with psycopg.connect(os.environ["BEDROCK_ADMIN_URL"], autocommit=True) as c:
+with psycopg.connect(os.environ["GREENLEDGER_ADMIN_URL"], autocommit=True) as c:
     c.execute("UPDATE journal_entries SET memo=%s WHERE entry_id=%s",(victim[1], victim[0]))
 print(f"  direct SQL tampering detected   : {detected}")
 print(f"  chain re-verifies after restore : {s.verify_chain(org)}")
@@ -87,16 +87,16 @@ s.pool.close()
 PY
 
 # Phase B summary is only meaningful when the AI role URL is available.
-if [ -n "${BEDROCK_AI_URL:-}" ]; then
+if [ -n "${GREENLEDGER_AI_URL:-}" ]; then
 echo
 echo "== Phase B gate summary (Phase 1 simulation invariants) =="
 python3 - <<'PY'
 import os, uuid
-from bedrock.policy_service import PolicyService
-from bedrock.phase1_sim import load_coa, simulate
-from bedrock.policy import BASE
+from greenledger.policy_service import PolicyService
+from greenledger.phase1_sim import load_coa, simulate
+from greenledger.policy import BASE
 
-p = PolicyService(app_dsn=os.environ["BEDROCK_DATABASE_URL"], ai_url=os.environ["BEDROCK_AI_URL"])
+p = PolicyService(app_dsn=os.environ["GREENLEDGER_DATABASE_URL"], ai_url=os.environ["GREENLEDGER_AI_URL"])
 org = p.ledger.ensure_org(f"GATE-B-{uuid.uuid4()}")
 load_coa(p.ledger, org)
 st = simulate(p, org, seed=42)
@@ -127,21 +127,21 @@ if [ -f "${ROOT}/web/package.json" ] && command -v npm >/dev/null 2>&1; then
     npm run build 2>&1 | tail -3 )
 fi
 
-if [ -n "${BEDROCK_AI_URL:-}" ]; then
+if [ -n "${GREENLEDGER_AI_URL:-}" ]; then
   echo
   echo "== Phase C: demo walk (queue -> close -> lock, via API) =="
   ( cd "${ROOT}/api"
-    uvicorn bedrock.main:app --host 127.0.0.1 --port 8000 >/tmp/bedrock_uvicorn.log 2>&1 &
+    uvicorn greenledger.main:app --host 127.0.0.1 --port 8000 >/tmp/greenledger_uvicorn.log 2>&1 &
     UV=$!
     for _ in $(seq 1 20); do
       curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && break; sleep 0.5
     done
-    BEDROCK_API_URL=http://127.0.0.1:8000 python3 "${ROOT}/scripts/demo_walk.py" || true
+    GREENLEDGER_API_URL=http://127.0.0.1:8000 python3 "${ROOT}/scripts/demo_walk.py" || true
     kill "${UV}" 2>/dev/null || true )
 fi
 
 # ---- Phase D: categorizer demo (offline stub LLM) --------------------------
-if [ -n "${BEDROCK_AI_URL:-}" ]; then
+if [ -n "${GREENLEDGER_AI_URL:-}" ]; then
   echo
   echo "== Phase D: categorizer demo (fresh vendor -> LLM -> correct -> pattern memory) =="
   ( cd "${ROOT}/api" && python3 "${ROOT}/scripts/demo_phase_d.py" || true )

@@ -1,7 +1,7 @@
-"""Connection management for Bedrock.
+"""Connection management for GreenLedger.
 
-The service layer always connects as the append-only ``bedrock_app`` role
-(``BEDROCK_DATABASE_URL``) — never as the superuser. The immutability and
+The service layer always connects as the append-only ``greenledger_app`` role
+(``GREENLEDGER_DATABASE_URL``) — never as the superuser. The immutability and
 proposals-only guarantees are the database's job, not this code's; connecting as
 a low-privilege role is what makes that real.
 """
@@ -12,18 +12,18 @@ from psycopg_pool import ConnectionPool
 
 
 def app_dsn() -> str:
-    dsn = os.environ.get("BEDROCK_DATABASE_URL")
+    dsn = os.environ.get("GREENLEDGER_DATABASE_URL")
     if not dsn:
-        raise RuntimeError("BEDROCK_DATABASE_URL is not set")
+        raise RuntimeError("GREENLEDGER_DATABASE_URL is not set")
     return dsn
 
 
 def ai_dsn() -> str:
-    """DSN for the proposals-only ``bedrock_ai`` role. Proposal writes go through
+    """DSN for the proposals-only ``greenledger_ai`` role. Proposal writes go through
     this connection, so the AI's write scope is enforced by the database."""
-    dsn = os.environ.get("BEDROCK_AI_URL")
+    dsn = os.environ.get("GREENLEDGER_AI_URL")
     if not dsn:
-        raise RuntimeError("BEDROCK_AI_URL is not set")
+        raise RuntimeError("GREENLEDGER_AI_URL is not set")
     return dsn
 
 

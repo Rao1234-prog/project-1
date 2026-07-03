@@ -1,4 +1,4 @@
-"""Bedrock categorizer (Phase D).
+"""GreenLedger categorizer (Phase D).
 
 Produces an AI proposal for a transaction. Two layers, in order:
 
@@ -17,7 +17,7 @@ Invariants:
     confidence-0.0 proposal that routes to the queue. Never fail open.
   * Replayable: model_id, prompt template version, prompt hash, and raw response
     are persisted per proposal; identical content reuses the cached proposal.
-  * Proposals are written through the bedrock_ai role only.
+  * Proposals are written through the greenledger_ai role only.
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def _norm(v: str) -> str:
 class Categorizer:
     def __init__(self, ledger: LedgerService, ai_pool: ConnectionPool, llm: LLMClient):
         self.ledger = ledger          # app-role reads (accounts, history)
-        self.ai_pool = ai_pool        # bedrock_ai — the only writer of proposals
+        self.ai_pool = ai_pool        # greenledger_ai — the only writer of proposals
         self.llm = llm
 
     # ---- chart of accounts --------------------------------------------
@@ -209,7 +209,7 @@ class Categorizer:
         conf = min(conf, LLM_CONFIDENCE_CAP)   # cap: uncalibrated self-report
         return (code, conf, rationale or "LLM categorization", "llm", resp.model_id, raw)
 
-    # ---- proposal persistence (via bedrock_ai) ------------------------
+    # ---- proposal persistence (via greenledger_ai) ------------------------
     def _cached_proposal(self, org: str, content_sha256: str) -> Optional[CategorizerResult]:
         with self.ledger.pool.connection() as conn:
             row = conn.execute(

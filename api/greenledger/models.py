@@ -1,4 +1,4 @@
-"""Request/response models for the Bedrock API. Amounts are integer minor units."""
+"""Request/response models for the GreenLedger API. Amounts are integer minor units."""
 from __future__ import annotations
 
 from datetime import date
@@ -73,7 +73,7 @@ class ProposalBody(BaseModel):
     rationale: str
     confidence: float = Field(..., ge=0.0, le=1.0)
     pattern_match: str
-    model_id: str = "bedrock-cat-1"
+    model_id: str = "greenledger-cat-1"
 
     @field_validator("pattern_match")
     @classmethod
@@ -113,7 +113,7 @@ class TransactionIn(BaseModel):
 class ReviewIn(BaseModel):
     action: str                    # approve | correct | reject
     reviewer_id: str
-    # role now comes from the X-Bedrock-Role header, not the body; kept optional
+    # role now comes from the X-GreenLedger-Role header, not the body; kept optional
     # for backward compatibility but ignored by the API.
     reviewer_role: Optional[str] = None
     corrected_account_code: Optional[str] = None

@@ -1,4 +1,4 @@
--- Bedrock — Section 1/2 conformance pass (adjudicated against pre-code-deliverables.md).
+-- GreenLedger — Section 1/2 conformance pass (adjudicated against pre-code-deliverables.md).
 -- Applied on top of 01-07. Idempotent-friendly (fresh reset re-applies cleanly).
 
 -- ============================================================
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS related_parties (
   created_at   timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org_id, counterparty)
 );
-GRANT SELECT, INSERT ON related_parties TO bedrock_app;
+GRANT SELECT, INSERT ON related_parties TO greenledger_app;
 
 -- ============================================================
 -- audit_log: hash-chained (append-only tamper evidence, spec §1.3)

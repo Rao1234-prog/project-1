@@ -18,20 +18,20 @@ STATE="${ROOT}/.pglocal"
 DATA="${STATE}/data"
 SOCK="${STATE}/sock"
 LOG="${STATE}/server.log"
-PORT="${BEDROCK_DB_PORT:-55432}"
+PORT="${GREENLEDGER_DB_PORT:-55432}"
 HOST=127.0.0.1
-PGUSER_SUPER=bedrock
-PGDB=bedrock
-APP_PW="${BEDROCK_APP_PASSWORD:-app_secret}"
-AI_PW="${BEDROCK_AI_PASSWORD:-ai_secret}"
+PGUSER_SUPER=greenledger
+PGDB=greenledger
+APP_PW="${GREENLEDGER_APP_PASSWORD:-app_secret}"
+AI_PW="${GREENLEDGER_AI_PASSWORD:-ai_secret}"
 
 # Run a command as the unprivileged postgres user (server won't run as root).
 as_pg() { runuser -u postgres -- "$@"; }
 
 emit_env() {
-  echo "export BEDROCK_ADMIN_URL='postgresql://${PGUSER_SUPER}@${HOST}:${PORT}/${PGDB}'"
-  echo "export BEDROCK_DATABASE_URL='postgresql://bedrock_app@${HOST}:${PORT}/${PGDB}'"
-  echo "export BEDROCK_AI_URL='postgresql://bedrock_ai@${HOST}:${PORT}/${PGDB}'"
+  echo "export GREENLEDGER_ADMIN_URL='postgresql://${PGUSER_SUPER}@${HOST}:${PORT}/${PGDB}'"
+  echo "export GREENLEDGER_DATABASE_URL='postgresql://greenledger_app@${HOST}:${PORT}/${PGDB}'"
+  echo "export GREENLEDGER_AI_URL='postgresql://greenledger_ai@${HOST}:${PORT}/${PGDB}'"
 }
 
 cmd_up() {
@@ -77,7 +77,7 @@ cmd_up() {
 apply_schema() {
   echo "applying schema"
   PGHOST="${SOCK}" PGPORT="${PORT}" PGUSER="${PGUSER_SUPER}" PGDATABASE="${PGDB}" \
-    BEDROCK_APP_PASSWORD="${APP_PW}" BEDROCK_AI_PASSWORD="${AI_PW}" \
+    GREENLEDGER_APP_PASSWORD="${APP_PW}" GREENLEDGER_AI_PASSWORD="${AI_PW}" \
     runuser -u postgres --preserve-environment -- \
     env PATH="${PGBIN}:${PATH}" "${ROOT}/db/apply.sh"
 }

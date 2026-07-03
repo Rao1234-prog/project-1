@@ -1,4 +1,4 @@
-"""Bedrock policy engine — persistent service layer (Phase B).
+"""GreenLedger policy engine — persistent service layer (Phase B).
 
 Wraps the pure routing logic in ``policy.py`` with Postgres-backed state so that
 everything survives restarts: per-counterparty daily cumulative totals, the
@@ -10,8 +10,8 @@ Key properties:
   * Provenant — every decision stores policy version + effective thresholds +
     reason, verbatim, for the paper trail.
   * Deterministic — same (txn, proposal, prior state) always routes the same way.
-  * Boundary-preserving — proposals are written through the ``bedrock_ai`` role;
-    the ledger post and state writes go through ``bedrock_app``.
+  * Boundary-preserving — proposals are written through the ``greenledger_ai`` role;
+    the ledger post and state writes go through ``greenledger_app``.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class ProposalIn:
     rationale: str
     confidence: float
     pattern_match: str
-    model_id: str = "bedrock-cat-1"
+    model_id: str = "greenledger-cat-1"
 
 
 @dataclass

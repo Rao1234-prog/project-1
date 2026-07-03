@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from bedrock.policy import (AUTO_POST, BASE, BK_QUEUE, BK_QUEUE_LOWCONF, CTRL_QUEUE,
+from greenledger.policy import (AUTO_POST, BASE, BK_QUEUE, BK_QUEUE_LOWCONF, CTRL_QUEUE,
                             HARD_STOP, Proposal, Txn, decide, error_rate, role_may_clear,
                             thresholds)
 

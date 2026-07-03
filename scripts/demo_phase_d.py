@@ -6,7 +6,7 @@ vendor's next transaction is served from pattern memory.
 Uses a deterministic offline LLM stub by default (no network). Set RUN_LIVE_LLM=1
 (and ANTHROPIC_API_KEY) to exercise the real Anthropic categorizer instead.
 
-Env: BEDROCK_DATABASE_URL, BEDROCK_AI_URL, BEDROCK_ADMIN_URL.
+Env: GREENLEDGER_DATABASE_URL, GREENLEDGER_AI_URL, GREENLEDGER_ADMIN_URL.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
-from bedrock.policy_service import PolicyService, DocumentIn
-from bedrock.llm import StubLLMClient, AnthropicLLMClient
+from greenledger.policy_service import PolicyService, DocumentIn
+from greenledger.llm import StubLLMClient, AnthropicLLMClient
 
 step = 0
 def say(m):

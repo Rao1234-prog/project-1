@@ -1,4 +1,4 @@
--- Bedrock — Phase B schema: policy engine state, decision provenance, review.
+-- GreenLedger — Phase B schema: policy engine state, decision provenance, review.
 --
 -- All policy state that must survive restarts lives here (never in process
 -- memory): per-counterparty daily cumulative totals, monthly auto-post share,
@@ -106,15 +106,15 @@ CREATE TABLE policy_daily_cum (
 -- Grants (the trust boundary continues to be enforced by privilege)
 -- ---------------------------------------------------------------------------
 -- The service role reads/writes policy state and the queue, but proposals stay
--- write-only-by-AI: bedrock_app still has SELECT on proposals only.
-GRANT SELECT, INSERT ON transactions                         TO bedrock_app;
-GRANT SELECT, INSERT, UPDATE ON routing_decisions            TO bedrock_app;
-GRANT SELECT, INSERT, UPDATE ON review_queue                 TO bedrock_app;
-GRANT SELECT, INSERT, UPDATE ON account_error_rates          TO bedrock_app;
-GRANT SELECT, INSERT, UPDATE ON policy_month_counts          TO bedrock_app;
-GRANT SELECT, INSERT, UPDATE ON policy_daily_cum             TO bedrock_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public        TO bedrock_app;
+-- write-only-by-AI: greenledger_app still has SELECT on proposals only.
+GRANT SELECT, INSERT ON transactions                         TO greenledger_app;
+GRANT SELECT, INSERT, UPDATE ON routing_decisions            TO greenledger_app;
+GRANT SELECT, INSERT, UPDATE ON review_queue                 TO greenledger_app;
+GRANT SELECT, INSERT, UPDATE ON account_error_rates          TO greenledger_app;
+GRANT SELECT, INSERT, UPDATE ON policy_month_counts          TO greenledger_app;
+GRANT SELECT, INSERT, UPDATE ON policy_daily_cum             TO greenledger_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public        TO greenledger_app;
 
 -- The AI role gains read-only visibility of transactions (to categorize) but
 -- STILL may write only proposals — no grant here changes that.
-GRANT SELECT ON transactions                                 TO bedrock_ai;
+GRANT SELECT ON transactions                                 TO greenledger_ai;

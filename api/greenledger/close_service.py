@@ -1,4 +1,4 @@
-"""Bedrock close + reconciliation service (Phase C).
+"""GreenLedger close + reconciliation service (Phase C).
 
 The month-end close is gated server-side: the checklist and the adversarial
 error hunt are computed here, and ``approve_close`` refuses (raises
