@@ -3,7 +3,3 @@ __pycache__/
 *.pyc
 *.egg-info/
 .DS_Store
-
-# Build artifact: install.sh compiles + code-signs this from bundle/launcher.c.
-# The signature (cdhash) is machine-specific, so it must not be committed.
-JARVIS.app/
