@@ -63,10 +63,15 @@ cd jarvis
 `install.sh` will:
 - create a virtualenv (`uv` if available, else `python3 -m venv`) in `./.venv`
   and install dependencies;
+- build and code-sign **`JARVIS.app`** — a small bundle around a compiled Mach-O
+  launcher (`bundle/launcher.c`) that gives JARVIS a stable, signable identity
+  (`com.omkaar.jarvis`) macOS can attach permissions to (see
+  [Permissions](#permissions));
 - seed `~/.jarvis/config.toml` and `~/.jarvis/persona.md` (without overwriting
   existing files);
 - link the `jarvis` CLI into `/usr/local/bin` (if writable);
-- install and load the launchd LaunchAgent so JARVIS starts at login.
+- install and load the launchd LaunchAgent (pointing at `JARVIS.app`) so JARVIS
+  starts at login.
 
 ### 2. Set your API key
 
@@ -191,11 +196,27 @@ menu → **Status** shows the current state.
 | **Screen Recording** | `take_screenshot` | Privacy & Security › Screen Recording |
 | **Automation** | AppleScript control of apps | Privacy & Security › Automation |
 
-If the hotkey doesn't fire, it's almost always Accessibility — grant it to the
-app running JARVIS (Terminal/your launcher, or the Python binary under launchd),
-then relaunch. Automation is requested the first time JARVIS controls a specific
-app; JARVIS detects the denial and tells you which pane to open rather than
-crashing.
+If the hotkey doesn't fire, it's almost always Accessibility — grant it to
+**JARVIS.app** in Privacy & Security › Accessibility (click **+**, press
+**⌘⇧G**, paste the repo's `JARVIS.app` path, toggle it on), then restart the
+service. Automation is requested the first time JARVIS controls a specific app;
+JARVIS detects the denial and tells you which pane to open rather than crashing.
+
+**Why a `.app` bundle (and not raw Python under launchd).** macOS TCC only
+durably attaches Accessibility / Screen Recording to an app with a stable,
+code-signed identity. A `uv`/CLI Python binary is ad-hoc, linker-signed with
+Identifier `-`, so it appears **greyed-out and unselectable** in the privacy
+panes and never keeps a grant. `install.sh` builds `JARVIS.app` — a compiled
+Mach-O launcher signed as `com.omkaar.jarvis` — which `fork()`s the venv Python
+as a *child* so the signed process stays the "responsible process" and the
+Python child **inherits** the grant. This is why launchd points at the bundle,
+not at Python directly.
+
+> **If you rebuild the bundle** (re-run `install.sh`, edit `launcher.c`), its
+> code signature changes and the old grant goes stale — the panes will show
+> JARVIS but permissions read as missing. Fix: **remove** the JARVIS entry with
+> **–** and **re-add** `JARVIS.app`, in both Accessibility and Screen Recording,
+> then `jarvis restart`.
 
 > `set_brightness` needs the optional `brightness` CLI: `brew install brightness`.
 > Everything else uses only built-in macOS tools.
@@ -279,6 +300,22 @@ your machine. Recommended first run, matching the build stages:
    respected. Check `~/.jarvis/actions.log`.
 6. Ask "what's on my screen?" — confirm the Screen Recording prompt, then a
    description.
+
+Then verify it as a **login service** (the way you'll actually run it):
+
+7. `jarvis restart` to run under launchd, then grant **JARVIS.app** in both
+   Accessibility and Screen Recording (see [Permissions](#permissions)). Confirm
+   `stdout.log` reports both as `granted` — that proves the signed bundle's grant
+   propagates to the Python child.
+8. Press **⌥ + Space** and ask a question — confirm the reply arrives with no
+   Terminal open. (On Groq's free tier a lone `429` can delay a multi-call answer
+   by the backoff interval; a no-tool question like "introduce yourself" returns
+   promptly.)
+9. **KeepAlive:** `kill -9` the bundle process and confirm launchd respawns a
+   single clean pair within a couple seconds (`jarvis status`), with no orphaned
+   duplicate.
+10. **At rest:** the idle process should sit at ~0% CPU (event-driven, no
+    polling) and ~35 MB RSS — check in Activity Monitor.
 
 ---
 
