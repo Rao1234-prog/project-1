@@ -77,7 +77,7 @@ it in `~/.jarvis/config.toml` under `[provider]`:
 [provider]
 name = "groq"
 base_url = "https://api.groq.com/openai/v1"
-model = "llama-3.3-70b-versatile"
+model = "qwen/qwen3-32b"
 api_key = "gsk_..."
 ```
 
@@ -119,7 +119,7 @@ log_level = "INFO"            # DEBUG | INFO | WARNING | ERROR
 [provider]
 name = "groq"                                     # free-text label
 base_url = "https://api.groq.com/openai/v1"       # any OpenAI-compatible endpoint
-model = "llama-3.3-70b-versatile"                 # must support tool/function calling
+model = "qwen/qwen3-32b"                          # must support tool/function calling
 # vision_model = "meta-llama/llama-4-scout-17b-16e-instruct"  # optional; enables screenshots
 api_key = "gsk_..."
 ```
@@ -141,11 +141,20 @@ curl -s https://api.groq.com/openai/v1/models \
   -H "Authorization: Bearer $GROQ_KEY" | python3 -m json.tool
 ```
 
-Prefer a large instruction-tuned Llama or Qwen model with tool support for
-`model`. `llama-3.3-70b-versatile` is text-only, so screenshots need a separate
-`vision_model` (a multimodal model such as a Llama 4 Scout variant). If you leave
-`vision_model` unset, JARVIS still *takes* screenshots but tells you visual
-analysis isn't available rather than crashing.
+Prefer a large instruction-tuned model that both emits well-formed tool calls
+**and** reliably chooses to call them. The default `qwen/qwen3-32b` was picked
+after live testing on Groq: it produced valid tool calls on every attempt, while
+`llama-3.3-70b-versatile` intermittently emitted malformed tool syntax (a `400
+tool_use_failed`) and `openai/gpt-oss-120b` usually answered in prose instead of
+invoking the tool. JARVIS retries a `tool_use_failed` a couple of times and then
+reports a clean message rather than crashing, but a reliable model avoids the
+problem in the first place. (Qwen3 is a reasoning model; Groq returns its
+chain-of-thought in a separate field, so JARVIS's replies stay clean.)
+
+`qwen/qwen3-32b` is text-only, so screenshots need a separate `vision_model` (a
+multimodal model such as a Llama 4 Scout variant). If you leave `vision_model`
+unset, JARVIS still *takes* screenshots but tells you visual analysis isn't
+available rather than crashing.
 
 ### Switching providers
 

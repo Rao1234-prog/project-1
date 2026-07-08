@@ -24,7 +24,7 @@ APP_LOG = JARVIS_DIR / "jarvis.log"
 # screenshot analysis gracefully rather than crash.
 DEFAULT_PROVIDER = "groq"
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "qwen/qwen3-32b"  # most reliable tool-caller on Groq's free tier
 DEFAULT_VISION_MODEL = ""  # empty = no vision model configured
 DEFAULT_HOTKEY = "opt+space"
 DEFAULT_LOG_LEVEL = "INFO"

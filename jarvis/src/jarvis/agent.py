@@ -33,6 +33,12 @@ _MAX_TOKENS = 2048
 # Free tiers throttle; retry a few 429s with exponential backoff.
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0  # seconds; delay = base * 2**attempt (unless Retry-After given)
+# Some open models (notably Llama on Groq) intermittently emit malformed
+# tool-call syntax the provider rejects with a 400 (code "tool_use_failed").
+# A plain re-request almost always yields a well-formed call, so retry a couple
+# of times before surfacing a clean, in-character error.
+_MAX_TOOL_FORMAT_RETRIES = 2
+_TOOL_FORMAT_RETRY_DELAY = 0.5  # seconds; a brief pause, not throttling
 
 _OPERATIONAL_NOTE = (
     "\n\nYou are running as a macOS menu bar assistant. You have tools to inspect "
@@ -46,6 +52,21 @@ _OPERATIONAL_NOTE = (
 def _is_rate_limit(exc: Exception) -> bool:
     """True if an exception is (or looks like) an HTTP 429."""
     return getattr(exc, "status_code", None) == 429
+
+
+def _is_tool_use_failed(exc: Exception) -> bool:
+    """True for a 400 where the model emitted tool-call syntax the provider
+    could not parse. Groq reports this as error code 'tool_use_failed'."""
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    if getattr(exc, "code", None) == "tool_use_failed":
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("code") == "tool_use_failed":
+            return True
+    return "tool_use_failed" in str(exc)
 
 
 def _retry_after(exc: Exception) -> float | None:
@@ -83,6 +104,12 @@ class Agent:
                     "We're being rate-limited by the provider, sir — give it a "
                     "moment and ask again."
                 )
+            elif _is_tool_use_failed(exc):
+                log.warning("provider kept rejecting malformed tool calls")
+                answer = (
+                    "The model garbled a tool request a few times just now, sir — "
+                    "a known hiccup with this provider. Do ask again."
+                )
             else:  # never let a request crash the app
                 log.exception("request failed")
                 answer = f"Something went wrong, sir: {exc}"
@@ -109,24 +136,42 @@ class Agent:
         return self.config.persona_text() + _OPERATIONAL_NOTE
 
     def _chat_create(self, model: str, messages: list[dict], tools=None):
-        """One chat-completions call, with 429 backoff (honours Retry-After)."""
+        """One chat-completions call, resilient to transient provider errors.
+
+        Two independent retry budgets:
+          * HTTP 429 rate limits  -> exponential backoff (honours Retry-After).
+          * 'tool_use_failed' 400s -> the model emitted malformed tool-call
+            syntax the provider rejected; a plain re-request usually fixes it.
+        Anything else propagates immediately.
+        """
         client = self._client_or_error()
         kwargs: dict = {"model": model, "max_tokens": _MAX_TOKENS, "messages": messages}
         if tools:
             kwargs["tools"] = tools
-        for attempt in range(_MAX_RETRIES + 1):
+        rate_retries = 0
+        format_retries = 0
+        while True:
             try:
                 return client.chat.completions.create(**kwargs)
             except Exception as exc:
-                if _is_rate_limit(exc) and attempt < _MAX_RETRIES:
+                if _is_rate_limit(exc) and rate_retries < _MAX_RETRIES:
                     delay = _retry_after(exc)
                     if delay is None:
-                        delay = _BACKOFF_BASE * (2 ** attempt)
+                        delay = _BACKOFF_BASE * (2 ** rate_retries)
+                    rate_retries += 1
                     log.warning(
                         "rate limited (attempt %d/%d); backing off %.1fs",
-                        attempt + 1, _MAX_RETRIES, delay,
+                        rate_retries, _MAX_RETRIES, delay,
                     )
                     time.sleep(delay)
+                    continue
+                if _is_tool_use_failed(exc) and format_retries < _MAX_TOOL_FORMAT_RETRIES:
+                    format_retries += 1
+                    log.warning(
+                        "provider rejected a malformed tool call (attempt %d/%d); retrying",
+                        format_retries, _MAX_TOOL_FORMAT_RETRIES,
+                    )
+                    time.sleep(_TOOL_FORMAT_RETRY_DELAY)
                     continue
                 raise
 

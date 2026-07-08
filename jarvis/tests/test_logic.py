@@ -32,7 +32,7 @@ def _cfg(vision_model: str | None = None) -> Config:
     return Config(
         provider="groq",
         base_url="https://api.groq.com/openai/v1",
-        model="llama-3.3-70b-versatile",
+        model="qwen/qwen3-32b",
         vision_model=vision_model,
         hotkey="opt+space",
         persona_file=Path("persona.md"),
@@ -65,6 +65,22 @@ class _RateLimit(Exception):
         super().__init__("429 Too Many Requests")
         if retry_after is not None:
             self.response = types.SimpleNamespace(headers={"retry-after": str(retry_after)})
+
+
+class _ToolUseFailed(Exception):
+    """Stand-in for openai.BadRequestError with Groq code 'tool_use_failed'.
+
+    Raised (as an HTTP 400) when the model emits tool-call syntax the provider
+    can't parse — a known intermittent Llama-on-Groq formatting glitch.
+    """
+
+    status_code = 400
+    code = "tool_use_failed"
+
+    def __init__(self):
+        super().__init__(
+            "400 tool_use_failed: '<function=run_shell{\"command\":\"rm x\"}</function>'"
+        )
 
 
 class _FakeCompletions:
@@ -244,6 +260,45 @@ class TestAgentLoop(unittest.TestCase):
         self.assertIn("rate-limited", self._captured["out"].lower())
         # 1 initial + _MAX_RETRIES retries.
         self.assertEqual(agent._client.chat.completions.calls, agent_mod._MAX_RETRIES + 1)
+
+    def test_tool_use_failed_retries_then_succeeds(self):
+        # The model emits malformed tool syntax once; a re-request succeeds.
+        # The safety gate is never involved — this fails inside the API call.
+        orig_sleep = agent_mod.time.sleep
+        agent_mod.time.sleep = lambda s: None
+        try:
+            scripted = [
+                _ToolUseFailed(),
+                _resp(_msg(content="All sorted, sir.")),
+            ]
+            agent = Agent(_cfg(), client=_FakeClient(scripted))
+            agent.handle_request("delete a file")
+        finally:
+            agent_mod.time.sleep = orig_sleep
+
+        self.assertEqual(self._captured["out"], "All sorted, sir.")
+        self.assertEqual(agent._client.chat.completions.calls, 2)
+
+    def test_tool_use_failed_exhausted_message(self):
+        # Every attempt is malformed; JARVIS surfaces a clean in-character
+        # message (never a raw exception, never a silent crash).
+        orig_sleep = agent_mod.time.sleep
+        agent_mod.time.sleep = lambda s: None
+        try:
+            agent = Agent(_cfg(), client=_FakeClient([_ToolUseFailed()]))
+            agent.handle_request("delete a file")
+        finally:
+            agent_mod.time.sleep = orig_sleep
+
+        out = self._captured["out"].lower()
+        self.assertIn("hiccup", out)
+        self.assertNotIn("traceback", out)
+        self.assertNotIn("tool_use_failed", out)
+        # 1 initial attempt + the tool-format retry budget.
+        self.assertEqual(
+            agent._client.chat.completions.calls,
+            agent_mod._MAX_TOOL_FORMAT_RETRIES + 1,
+        )
 
     def test_screenshot_no_vision_model_is_graceful(self):
         # Text-only provider: capture succeeds, analysis is declined cleanly.
