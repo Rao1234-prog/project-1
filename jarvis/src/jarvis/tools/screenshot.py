@@ -1,7 +1,13 @@
-"""take_screenshot — capture the screen and hand the image back to the model.
+"""take_screenshot — capture the screen and hand the image back to the agent.
 
-Returns a list of Anthropic content blocks (text + image) so Claude can actually
-see and analyse the screenshot, not just a file path.
+On success this returns a provider-agnostic image dict::
+
+    {"type": "image", "path": "...", "media_type": "image/png", "data_url": "data:image/png;base64,..."}
+
+The agent decides what to do with it: route it to a vision model (as an OpenAI
+`image_url` message) if one is configured, or report cleanly that visual
+analysis isn't available on a text-only provider. On failure it returns a plain
+string, which the agent relays as-is.
 """
 
 from __future__ import annotations
@@ -11,11 +17,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# Keep the encoded image well under the API's per-image limits.
+# Keep the encoded image well under typical per-image API limits.
 _MAX_BYTES = 4_500_000
 
 
-def take_screenshot() -> list[dict]:
+def take_screenshot() -> dict | str:
     tmp = Path(tempfile.gettempdir()) / "jarvis_screenshot.png"
     try:
         proc = subprocess.run(
@@ -26,19 +32,14 @@ def take_screenshot() -> list[dict]:
             timeout=30,
         )
     except subprocess.TimeoutExpired:
-        return [{"type": "text", "text": "Error: screencapture timed out."}]
+        return "Error: screencapture timed out."
 
     if proc.returncode != 0 or not tmp.exists():
-        return [
-            {
-                "type": "text",
-                "text": (
-                    "Error: screenshot failed. macOS Screen Recording permission "
-                    "may be missing (System Settings › Privacy & Security › "
-                    f"Screen Recording). {(proc.stderr or '').strip()}"
-                ),
-            }
-        ]
+        return (
+            "Error: screenshot failed. macOS Screen Recording permission "
+            "may be missing (System Settings › Privacy & Security › "
+            f"Screen Recording). {(proc.stderr or '').strip()}"
+        )
 
     data = tmp.read_bytes()
     if len(data) > _MAX_BYTES:
@@ -52,14 +53,9 @@ def take_screenshot() -> list[dict]:
         data = tmp.read_bytes()
 
     b64 = base64.standard_b64encode(data).decode("ascii")
-    return [
-        {"type": "text", "text": "Screenshot captured."},
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": b64,
-            },
-        },
-    ]
+    return {
+        "type": "image",
+        "path": str(tmp),
+        "media_type": "image/png",
+        "data_url": f"data:image/png;base64,{b64}",
+    }

@@ -1,10 +1,6 @@
 # JARVIS configuration. Copy to ~/.jarvis/config.toml and edit.
 # install.sh does this for you on first run.
 
-# Claude model to use. claude-sonnet-4-6 is a good balance of speed and quality
-# for an interactive assistant. Swap for another model id here if you like.
-model = "claude-sonnet-4-6"
-
 # Global hotkey that opens the input box. Combine modifiers with "+".
 # Accepted tokens: opt/option/alt (⌥), cmd/command (⌘), ctrl/control (⌃),
 # shift (⇧), and any single key or "space". Default is ⌥ + Space.
@@ -17,8 +13,31 @@ persona_file = "~/.jarvis/persona.md"
 # DEBUG, INFO, WARNING, ERROR.
 log_level = "INFO"
 
-# API key. Prefer the ANTHROPIC_API_KEY environment variable and leave this
-# blank/commented. If set here, it is used only when the env var is absent.
-# Never commit a real key.
-[anthropic]
-# api_key = "sk-ant-..."
+# --- Provider -------------------------------------------------------------
+# JARVIS talks to any OpenAI-compatible chat-completions API. Switch providers
+# by editing this block and restarting (`jarvis restart`).
+#
+#   name        free-text label for logs/status
+#   base_url    the OpenAI-compatible endpoint (…/v1)
+#   model       chat model id (must support function/tool calling)
+#   vision_model  optional; a multimodal model used only for screenshot
+#                 analysis. Leave unset to disable screenshot vision cleanly.
+#   api_key     provider key. Prefer setting it here (launchd can't read your
+#               shell env). The JARVIS_API_KEY env var overrides this if set.
+#
+# Groq (free tier, no card): key from https://console.groq.com/keys
+[provider]
+name = "groq"
+base_url = "https://api.groq.com/openai/v1"
+model = "llama-3.3-70b-versatile"
+# vision_model = "meta-llama/llama-4-scout-17b-16e-instruct"
+# api_key = "gsk_..."
+
+# To switch to Google Gemini's OpenAI-compatible endpoint, comment out the
+# [provider] block above and uncomment this one:
+# [provider]
+# name = "gemini"
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+# model = "gemini-2.0-flash"
+# vision_model = "gemini-2.0-flash"
+# api_key = "..."

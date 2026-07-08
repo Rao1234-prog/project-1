@@ -1,8 +1,9 @@
 """Tool definitions (sent to the model) and the name→handler map.
 
-To add a tool: write a handler in a tools/ module, add its Anthropic tool
-definition to TOOL_DEFINITIONS, register it in HANDLERS, and classify it in
-safety.py. See README "Adding a new tool".
+To add a tool: write a handler in a tools/ module, add its definition to
+TOOL_DEFINITIONS, register it in HANDLERS, and classify it in safety.py.
+`openai_tools()` reshapes TOOL_DEFINITIONS into OpenAI function-calling format
+for the wire. See README "Adding a new tool".
 """
 
 from __future__ import annotations
@@ -11,8 +12,9 @@ from typing import Callable
 
 from . import applescript, apps, files, screenshot, shell, system
 
-# Anthropic tool definitions. Descriptions are prescriptive about *when* to call
-# each tool — the model relies on them heavily.
+# Tool definitions. Descriptions are prescriptive about *when* to call each tool
+# — the model relies on them heavily. `openai_tools()` converts these to the
+# OpenAI function-calling wire format.
 TOOL_DEFINITIONS: list[dict] = [
     {
         "name": "run_applescript",
@@ -127,6 +129,26 @@ TOOL_DEFINITIONS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}},
     },
 ]
+
+def openai_tools() -> list[dict]:
+    """TOOL_DEFINITIONS in OpenAI function-calling wire format.
+
+    The definitions above are the single source of truth; this only reshapes
+    them into ``{"type": "function", "function": {name, description, parameters}}``
+    for the OpenAI-compatible chat-completions API.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in TOOL_DEFINITIONS
+    ]
+
 
 # name -> handler. Handlers take keyword args matching their input_schema and
 # return either a str or a list of content blocks.

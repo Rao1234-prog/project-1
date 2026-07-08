@@ -1,17 +1,23 @@
 # JARVIS — a menu bar assistant for macOS
 
 A small, always-there assistant that lives in your menu bar. Press a global
-hotkey (⌥ + Space by default), type a request, and Claude answers — and can act
+hotkey (⌥ + Space by default), type a request, and an LLM answers — and can act
 on your Mac through a set of gated tools (run scripts, check status, open apps,
 search files, take and analyse screenshots). Destructive actions require a native
 confirmation before they run.
+
+JARVIS is **provider-agnostic**: it talks to any OpenAI-compatible
+chat-completions API. The default is [Groq](https://console.groq.com)'s free
+tier (no credit card), but switching to Google Gemini's compat endpoint, OpenAI,
+or a local server is a config edit — see [Configuration](#configuration--jarvisconfigtoml).
 
 Built for Apple Silicon (tested target: MacBook Air 15" M3) on current macOS,
 Python 3.11+. It is deliberately architected so **voice (wake word + STT/TTS)
 can be added later without a rewrite** — see [Tier 2](#tier-2-adding-voice).
 
 > **Tier 1 scope:** typed input only. No voice, no wake word, no always-on
-> microphone, no telemetry. The only network call is to the Anthropic API.
+> microphone, no telemetry. The only network call is to your configured LLM
+> provider.
 
 ---
 
@@ -20,7 +26,7 @@ can be added later without a rewrite** — see [Tier 2](#tier-2-adding-voice).
 | Tool | What it does | Gate |
 |------|--------------|------|
 | `system_status` | Battery, Wi-Fi, free disk, volume | SAFE |
-| `take_screenshot` | Capture the screen; the image is analysed by Claude | SAFE |
+| `take_screenshot` | Capture the screen; the image is analysed by a vision model (if configured) | SAFE |
 | `search_files` | Spotlight (`mdfind`) search, scoped to your home folder | SAFE |
 | `open_app` | Launch/focus an app | SAFE |
 | `set_volume` / `set_brightness` | Adjust output volume / display brightness | SAFE |
@@ -64,20 +70,22 @@ cd jarvis
 
 ### 2. Set your API key
 
-The key is read from the `ANTHROPIC_API_KEY` environment variable first, then
-from `~/.jarvis/config.toml`. **Never hardcode it.**
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...      # e.g. add to ~/.zshrc
-```
-
-Because launchd doesn't inherit your shell environment, for launch-at-login the
-most reliable option is to put the key in `~/.jarvis/config.toml`:
+Get a free Groq key at **https://console.groq.com/keys** (no credit card). Put
+it in `~/.jarvis/config.toml` under `[provider]`:
 
 ```toml
-[anthropic]
-api_key = "sk-ant-..."
+[provider]
+name = "groq"
+base_url = "https://api.groq.com/openai/v1"
+model = "llama-3.3-70b-versatile"
+api_key = "gsk_..."
 ```
+
+The config file is the reliable place because **launchd doesn't inherit your
+shell environment** — a key exported in `~/.zshrc` is invisible to the
+login-item instance. (For development you can instead export `JARVIS_API_KEY`,
+which overrides the config value.) **Never commit a real key**; `~/.jarvis/` is
+outside the repo, and the file is kept at mode `600`.
 
 ### 3. Grant permissions
 
@@ -91,23 +99,29 @@ a scrollable window.
 
 ### Running without launchd (for development)
 
+With the key already in `~/.jarvis/config.toml`:
+
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
 PYTHONPATH=src ./.venv/bin/python -m jarvis.main
 ```
+
+(Or `export JARVIS_API_KEY=gsk_...` to override the config value for a session.)
 
 ---
 
 ## Configuration — `~/.jarvis/config.toml`
 
 ```toml
-model = "claude-sonnet-4-6"   # any Claude model id
 hotkey = "opt+space"          # opt/cmd/ctrl/shift + a key or "space"
 persona_file = "~/.jarvis/persona.md"
 log_level = "INFO"            # DEBUG | INFO | WARNING | ERROR
 
-[anthropic]
-# api_key = "sk-ant-..."      # prefer the env var; this is a fallback
+[provider]
+name = "groq"                                     # free-text label
+base_url = "https://api.groq.com/openai/v1"       # any OpenAI-compatible endpoint
+model = "llama-3.3-70b-versatile"                 # must support tool/function calling
+# vision_model = "meta-llama/llama-4-scout-17b-16e-instruct"  # optional; enables screenshots
+api_key = "gsk_..."
 ```
 
 - **hotkey** tokens: `opt`/`option`/`alt` (⌥), `cmd`/`command` (⌘),
@@ -115,6 +129,45 @@ log_level = "INFO"            # DEBUG | INFO | WARNING | ERROR
   e.g. `cmd+shift+j`.
 - **persona** — edit `~/.jarvis/persona.md` to change JARVIS's voice. It is
   loaded verbatim as the system prompt.
+
+### Choosing a model
+
+The chat `model` **must support function/tool calling** or JARVIS can't drive
+any tools. Groq's free catalogue changes over time — check the current list and
+each model's capabilities before committing:
+
+```bash
+curl -s https://api.groq.com/openai/v1/models \
+  -H "Authorization: Bearer $GROQ_KEY" | python3 -m json.tool
+```
+
+Prefer a large instruction-tuned Llama or Qwen model with tool support for
+`model`. `llama-3.3-70b-versatile` is text-only, so screenshots need a separate
+`vision_model` (a multimodal model such as a Llama 4 Scout variant). If you leave
+`vision_model` unset, JARVIS still *takes* screenshots but tells you visual
+analysis isn't available rather than crashing.
+
+### Switching providers
+
+Point `base_url`/`model`/`api_key` at any OpenAI-compatible service. The example
+config ships with a commented-out **Google Gemini** block
+(`generativelanguage.googleapis.com/v1beta/openai`) — uncomment it, drop in a
+[Google AI Studio](https://aistudio.google.com/apikey) key, and `jarvis restart`.
+Gemini models are natively multimodal, so the same id works for `vision_model`.
+
+### Rate limits & data privacy
+
+Free tiers throttle. Groq's free tier is roughly **30 requests/minute** plus a
+daily token cap (see your console for current numbers). JARVIS retries HTTP 429s
+with short exponential backoff (honouring `Retry-After`) and, if still limited,
+replies *"We're being rate-limited by the provider, sir — give it a moment"*
+rather than erroring out.
+
+> **Privacy note.** Your prompts — and any screenshot you ask JARVIS to
+> analyse — are sent to your configured provider. Free tiers may retain or use
+> submitted data to improve their services. Be mindful of what's on screen
+> before asking JARVIS to look, and prefer a paid/enterprise tier or a local
+> model if you handle sensitive material.
 
 ---
 
@@ -165,7 +218,7 @@ src/jarvis/
   main.py        entry point: menu bar (rumps), wiring, first-run permission check
   config.py      ~/.jarvis/config.toml + API-key resolution
   hotkey.py      global hotkey listener (pynput); chord-string parser
-  agent.py       Anthropic API + tool loop; rolling history
+  agent.py       OpenAI-compatible API + tool loop; rolling history; 429 backoff
   safety.py      SAFE/GUARDED classifier + confirmation gate + action log
   ui.py          respond(text) — the single output seam — + dialogs/notifications
   permissions.py detect Accessibility / Screen Recording; open the right pane
@@ -186,8 +239,9 @@ Design notes:
 ## Adding a new tool
 
 1. **Write the handler** in a `src/jarvis/tools/` module. It receives keyword
-   args matching its schema and returns a `str` (or a list of Anthropic content
-   blocks, like `screenshot.py`, to hand back an image).
+   args matching its schema and returns a `str` (or, like `screenshot.py`, an
+   image dict `{"type": "image", "data_url": ...}` the agent routes to a vision
+   model).
 2. **Declare it** in `src/jarvis/tools/registry.py`: add an entry to
    `TOOL_DEFINITIONS` (name, a *prescriptive* description of when to call it, and
    an `input_schema`) and register the handler in `HANDLERS`.
@@ -200,14 +254,13 @@ Design notes:
 
 ## Verifying on your Mac
 
-This scaffold was authored in a Linux CI environment, which cannot run macOS
-menu-bar / hotkey / permission APIs — so the pure logic (safety classifier,
-hotkey parser, the tool loop against a mocked client) is unit-tested, but the
-macOS integration must be exercised on your machine. Recommended first run,
-matching the build stages:
+This scaffold's pure logic (safety classifier, hotkey parser, the OpenAI-format
+tool loop against a mocked client, 429 backoff, the no-vision screenshot path) is
+unit-tested and runs on any OS, but the macOS integration must be exercised on
+your machine. Recommended first run, matching the build stages:
 
-1. `./install.sh`, set the key, then run in the foreground:
-   `PYTHONPATH=src ./.venv/bin/python -m jarvis.main`.
+1. `./install.sh`, set your Groq key in `~/.jarvis/config.toml`, then run in the
+   foreground: `PYTHONPATH=src ./.venv/bin/python -m jarvis.main`.
 2. Confirm **🤖** appears in the menu bar with no Dock icon.
 3. Press **⌥ + Space** — confirm the input box appears (grant Accessibility if
    not, then relaunch).

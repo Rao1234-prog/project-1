@@ -1,24 +1,27 @@
 # JARVIS — macOS menu bar assistant — Build Plan
 
 A JARVIS-style menu bar assistant for macOS (Apple Silicon, current macOS).
-Type a request via a global hotkey; Claude answers and can drive the Mac through
-a small set of gated tools. Architected so voice (wake word + STT/TTS) can be
-bolted on later without a rewrite.
+Type a request via a global hotkey; an LLM answers and can drive the Mac through
+a small set of gated tools. Provider-agnostic: any OpenAI-compatible
+chat-completions API (default Groq free tier). Architected so voice (wake word +
+STT/TTS) can be bolted on later without a rewrite.
 
 ## Target machine
 MacBook Air 15" 2024 (M3, Apple Silicon), current macOS. Python 3.11+.
 
 ## Non-goals for this build
 No voice, no wake word, no always-on microphone. No telemetry. No network calls
-other than the Anthropic API.
+other than the configured LLM provider's API.
 
 ## Module layout (`src/jarvis/`)
 - `main.py`      — entry point: menu bar app (rumps), wiring, first-run checks.
 - `config.py`    — load `~/.jarvis/config.toml`, resolve API key, defaults.
 - `hotkey.py`    — global hotkey listener (pynput), configurable chord.
-- `agent.py`     — Anthropic API + tool loop. **Input-source-agnostic**: one
-                   `handle_request(text)` entry (typed today, transcription later).
-                   Rolling history (~10 exchanges).
+- `agent.py`     — OpenAI-compatible chat-completions API + tool loop, with 429
+                   backoff and vision-model routing for screenshots.
+                   **Input-source-agnostic**: one `handle_request(text)` entry
+                   (typed today, transcription later). Rolling history (~10
+                   exchanges).
 - `safety.py`    — SAFE/GUARDED classifier + confirmation gate + action log.
 - `ui.py`        — `respond(text)` (single output seam for TTS later), input
                    dialog, confirm dialog, notifications, scrollable output.
@@ -55,8 +58,10 @@ gate: classification happens in `safety.py`, between the model's tool request
 and execution.
 
 ## Config (`~/.jarvis/config.toml`)
-`model`, `hotkey`, `persona_file`, `log_level`, and optional `[anthropic] api_key`
-(env `ANTHROPIC_API_KEY` takes precedence).
+`hotkey`, `persona_file`, `log_level`, and a `[provider]` table: `name`,
+`base_url`, `model`, optional `vision_model`, and `api_key` (env `JARVIS_API_KEY`
+takes precedence). Switching providers (Groq → Gemini/OpenAI/local) is an
+edit-and-restart of `[provider]`.
 
 ## Persona
 `persona.md` (editable) holds the JARVIS register — addresses the user as "sir",
@@ -69,7 +74,7 @@ logs / status.
 
 ## Build order (incremental — verify on the Mac between stages)
 1. Menu bar icon + hotkey + hardcoded echo response.  ← verify hotkey fires
-2. Anthropic API layer (persona + rolling history).
+2. LLM API layer (OpenAI-compatible; persona + rolling history).
 3. Tools.
 4. Safety gate (SAFE/GUARDED + confirm dialog + action log).
 5. launchd + install/uninstall + `jarvis` CLI.

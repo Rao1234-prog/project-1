@@ -87,8 +87,9 @@ cat <<'DONE'
 ==> Done.
 
 Next steps:
-  1. Set your API key:  export ANTHROPIC_API_KEY=sk-ant-...   (or add it to
-     ~/.jarvis/config.toml under [anthropic]).
+  1. Set your provider API key in ~/.jarvis/config.toml under [provider]
+     (e.g. a Groq key from https://console.groq.com/keys). launchd can't read
+     your shell env, so the config file is the reliable place.
   2. Grant permissions when prompted: Accessibility (hotkey), Screen Recording
      (screenshots). Automation is requested the first time JARVIS controls an app.
   3. Look for the 🤖 in your menu bar. Press ⌥ + Space to ask.

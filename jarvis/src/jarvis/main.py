@@ -122,7 +122,10 @@ def main() -> None:
     cfg = config_mod.load(repo_root=_repo_root())
     _setup_logging(cfg.log_level)
     log = logging.getLogger("jarvis.main")
-    log.info("starting JARVIS (model=%s, hotkey=%s)", cfg.model, cfg.hotkey)
+    log.info(
+        "starting JARVIS (provider=%s, model=%s, vision=%s, hotkey=%s)",
+        cfg.provider, cfg.model, cfg.vision_model or "none", cfg.hotkey,
+    )
 
     _hide_dock_icon()
     _first_run_permissions()

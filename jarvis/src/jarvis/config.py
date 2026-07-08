@@ -1,7 +1,9 @@
 """Configuration loading for JARVIS.
 
-Reads ~/.jarvis/config.toml (creating a default on first run) and resolves the
-Anthropic API key from the environment or the config file.
+Reads ~/.jarvis/config.toml (creating a default on first run). JARVIS talks to
+any OpenAI-compatible chat-completions endpoint; the provider (name, base URL,
+model, optional vision model, and API key) is configured in the [provider]
+table so switching providers is an edit-and-restart operation.
 """
 
 from __future__ import annotations
@@ -17,20 +19,40 @@ PERSONA_PATH = JARVIS_DIR / "persona.md"
 ACTIONS_LOG = JARVIS_DIR / "actions.log"
 APP_LOG = JARVIS_DIR / "jarvis.log"
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Defaults target Groq's free tier (OpenAI-compatible). A vision-capable model is
+# opt-in (many free text models can't see images); leave it unset to disable
+# screenshot analysis gracefully rather than crash.
+DEFAULT_PROVIDER = "groq"
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_VISION_MODEL = ""  # empty = no vision model configured
 DEFAULT_HOTKEY = "opt+space"
 DEFAULT_LOG_LEVEL = "INFO"
 
 # Written to ~/.jarvis/config.toml if none exists yet.
 _DEFAULT_CONFIG_TOML = f"""\
 # JARVIS configuration. See config.example.toml in the repo for all options.
-model = "{DEFAULT_MODEL}"
 hotkey = "{DEFAULT_HOTKEY}"
 persona_file = "~/.jarvis/persona.md"
 log_level = "{DEFAULT_LOG_LEVEL}"
 
-[anthropic]
-# api_key = "sk-ant-..."   # prefer the ANTHROPIC_API_KEY environment variable
+# JARVIS uses any OpenAI-compatible chat-completions API. Switch providers by
+# editing this block and restarting (`jarvis restart`).
+[provider]
+name = "{DEFAULT_PROVIDER}"
+base_url = "{DEFAULT_BASE_URL}"
+model = "{DEFAULT_MODEL}"
+# vision_model = "meta-llama/llama-4-scout-17b-16e-instruct"  # optional; enables screenshot analysis
+# api_key = "gsk_..."   # your Groq key from https://console.groq.com/keys
+
+# To switch to Google Gemini's OpenAI-compatible endpoint later, comment out the
+# [provider] block above and uncomment this one:
+# [provider]
+# name = "gemini"
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+# model = "gemini-2.0-flash"
+# vision_model = "gemini-2.0-flash"   # Gemini models are natively multimodal
+# api_key = "..."   # your Google AI Studio key
 """
 
 # Fallback persona used only if persona.md is missing and the repo copy can't be
@@ -43,7 +65,10 @@ _FALLBACK_PERSONA = (
 
 @dataclass
 class Config:
+    provider: str
+    base_url: str
     model: str
+    vision_model: str | None
     hotkey: str
     persona_file: Path
     log_level: str
@@ -88,18 +113,26 @@ def load(repo_root: Path | None = None) -> Config:
         # Corrupt or unreadable config: fall back to defaults rather than crash.
         data = {}
 
-    model = str(data.get("model", DEFAULT_MODEL))
     hotkey = str(data.get("hotkey", DEFAULT_HOTKEY))
     persona_file = _expand(str(data.get("persona_file", str(PERSONA_PATH))))
     log_level = str(data.get("log_level", DEFAULT_LOG_LEVEL)).upper()
 
-    # Env var wins; config value is a fallback only.
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        api_key = (data.get("anthropic") or {}).get("api_key") or None
+    provider_cfg = data.get("provider") or {}
+    provider = str(provider_cfg.get("name", DEFAULT_PROVIDER))
+    base_url = str(provider_cfg.get("base_url", DEFAULT_BASE_URL))
+    # `model` lives under [provider]; fall back to a legacy top-level key, then default.
+    model = str(provider_cfg.get("model", data.get("model", DEFAULT_MODEL)))
+    vision_model = str(provider_cfg.get("vision_model", DEFAULT_VISION_MODEL)).strip() or None
+
+    # Env var wins (handy for dev); the config file is the reliable source under
+    # launchd, which does not inherit your shell environment.
+    api_key = os.environ.get("JARVIS_API_KEY") or provider_cfg.get("api_key") or None
 
     return Config(
+        provider=provider,
+        base_url=base_url,
         model=model,
+        vision_model=vision_model,
         hotkey=hotkey,
         persona_file=persona_file,
         log_level=log_level,

@@ -2,7 +2,7 @@
 
 These exercise the parts that do NOT need macOS frameworks or the network:
 the SAFE/GUARDED safety classifier, the hotkey chord parser, and the agent
-tool loop (against a fake Anthropic client). They run on any OS.
+tool loop (against a fake OpenAI-compatible client). They run on any OS.
 
 Run from the repo's jarvis/ directory:
 
@@ -20,6 +20,7 @@ import types
 import unittest
 from pathlib import Path
 
+from jarvis import agent as agent_mod
 from jarvis import hotkey, safety, ui
 from jarvis.agent import Agent
 from jarvis.config import Config
@@ -27,42 +28,63 @@ from jarvis.safety import Level
 from jarvis.tools import registry
 
 
-def _cfg() -> Config:
+def _cfg(vision_model: str | None = None) -> Config:
     return Config(
-        model="claude-sonnet-4-6",
+        provider="groq",
+        base_url="https://api.groq.com/openai/v1",
+        model="llama-3.3-70b-versatile",
+        vision_model=vision_model,
         hotkey="opt+space",
         persona_file=Path("persona.md"),
         log_level="INFO",
-        api_key=None,
+        api_key="test-key",
     )
 
 
-def _blk(**kw):
-    return types.SimpleNamespace(**kw)
+# -- fake OpenAI-compatible client ------------------------------------------
+def _msg(content=None, tool_calls=None):
+    return types.SimpleNamespace(content=content, tool_calls=tool_calls)
 
 
-class _Resp:
-    def __init__(self, content, stop_reason):
-        self.content = content
-        self.stop_reason = stop_reason
+def _tool_call(id, name, arguments):
+    return types.SimpleNamespace(
+        id=id, function=types.SimpleNamespace(name=name, arguments=arguments)
+    )
 
 
-class _FakeMessages:
-    """Scripted responses: a list of _Resp returned in order."""
+def _resp(message):
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+
+class _RateLimit(Exception):
+    """Stand-in for openai.RateLimitError (an HTTP 429)."""
+
+    status_code = 429
+
+    def __init__(self, retry_after=None):
+        super().__init__("429 Too Many Requests")
+        if retry_after is not None:
+            self.response = types.SimpleNamespace(headers={"retry-after": str(retry_after)})
+
+
+class _FakeCompletions:
+    """Scripted responses returned in order; an Exception entry is raised."""
 
     def __init__(self, scripted):
         self._scripted = scripted
         self.calls = 0
 
     def create(self, **kw):
-        resp = self._scripted[min(self.calls, len(self._scripted) - 1)]
+        item = self._scripted[min(self.calls, len(self._scripted) - 1)]
         self.calls += 1
-        return resp
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 class _FakeClient:
     def __init__(self, scripted):
-        self.messages = _FakeMessages(scripted)
+        self.chat = types.SimpleNamespace(completions=_FakeCompletions(scripted))
 
 
 class TestShellClassification(unittest.TestCase):
@@ -121,6 +143,19 @@ class TestHotkeyParser(unittest.TestCase):
             self.assertEqual(hotkey.to_pynput(raw), expected, raw)
 
 
+class TestOpenAIToolSchema(unittest.TestCase):
+    def test_conversion_shape(self):
+        tools = registry.openai_tools()
+        self.assertEqual(len(tools), len(registry.TOOL_DEFINITIONS))
+        for t in tools:
+            self.assertEqual(t["type"], "function")
+            fn = t["function"]
+            self.assertIn("name", fn)
+            self.assertIn("description", fn)
+            self.assertIn("parameters", fn)  # JSON-schema object
+            self.assertEqual(fn["parameters"]["type"], "object")
+
+
 class TestAgentLoop(unittest.TestCase):
     def setUp(self):
         # Redirect the action log to a temp file and capture responses.
@@ -141,20 +176,15 @@ class TestAgentLoop(unittest.TestCase):
 
     def test_safe_tool_round_trip(self):
         scripted = [
-            _Resp(
-                [
-                    _blk(type="text", text="One moment, sir."),
-                    _blk(type="tool_use", id="t1", name="system_status", input={}),
-                ],
-                stop_reason="tool_use",
-            ),
-            _Resp([_blk(type="text", text="Battery looks healthy, sir.")], stop_reason="end_turn"),
+            _resp(_msg(content="One moment, sir.",
+                       tool_calls=[_tool_call("t1", "system_status", "{}")])),
+            _resp(_msg(content="Battery looks healthy, sir.")),
         ]
         agent = Agent(_cfg(), client=_FakeClient(scripted))
         agent.handle_request("how's my battery?")
 
         self.assertEqual(self._captured["out"], "Battery looks healthy, sir.")
-        self.assertEqual(agent._client.messages.calls, 2)
+        self.assertEqual(agent._client.chat.completions.calls, 2)
         self.assertEqual(len(agent._history), 2)  # one user + one assistant
         tail = self._tmp.read_text().strip().splitlines()[-1]
         self.assertIn("system_status", tail)
@@ -167,12 +197,9 @@ class TestAgentLoop(unittest.TestCase):
         ui.confirm = lambda desc, title="JARVIS — confirm": False
         try:
             scripted = [
-                _Resp(
-                    [_blk(type="tool_use", id="t1", name="run_shell",
-                          input={"command": "rm -rf ~/Documents"})],
-                    stop_reason="tool_use",
-                ),
-                _Resp([_blk(type="text", text="Understood, sir.")], stop_reason="end_turn"),
+                _resp(_msg(tool_calls=[_tool_call(
+                    "t1", "run_shell", '{"command": "rm -rf ~/Documents"}')])),
+                _resp(_msg(content="Understood, sir.")),
             ]
             agent = Agent(_cfg(), client=_FakeClient(scripted))
             agent.handle_request("delete my documents")
@@ -184,6 +211,60 @@ class TestAgentLoop(unittest.TestCase):
         self.assertIn("GUARDED", tail)
         self.assertIn("denied", tail)
         self.assertIn("rm -rf", tail)
+
+    def test_rate_limit_backoff_then_success(self):
+        # First two calls 429, third succeeds. Backoff must not crash and the
+        # answer must come through. Neutralise the sleep so the test is fast.
+        orig_sleep = agent_mod.time.sleep
+        agent_mod.time.sleep = lambda s: None
+        try:
+            scripted = [
+                _RateLimit(retry_after=1),
+                _RateLimit(),
+                _resp(_msg(content="All caught up, sir.")),
+            ]
+            agent = Agent(_cfg(), client=_FakeClient(scripted))
+            agent.handle_request("status?")
+        finally:
+            agent_mod.time.sleep = orig_sleep
+
+        self.assertEqual(self._captured["out"], "All caught up, sir.")
+        self.assertEqual(agent._client.chat.completions.calls, 3)
+
+    def test_rate_limit_exhausted_message(self):
+        # Every call 429; after retries JARVIS surfaces a clean message, no crash.
+        orig_sleep = agent_mod.time.sleep
+        agent_mod.time.sleep = lambda s: None
+        try:
+            agent = Agent(_cfg(), client=_FakeClient([_RateLimit()]))
+            agent.handle_request("status?")
+        finally:
+            agent_mod.time.sleep = orig_sleep
+
+        self.assertIn("rate-limited", self._captured["out"].lower())
+        # 1 initial + _MAX_RETRIES retries.
+        self.assertEqual(agent._client.chat.completions.calls, agent_mod._MAX_RETRIES + 1)
+
+    def test_screenshot_no_vision_model_is_graceful(self):
+        # Text-only provider: capture succeeds, analysis is declined cleanly.
+        agent = Agent(_cfg(vision_model=None), client=_FakeClient([_resp(_msg(content="x"))]))
+        img = {"type": "image", "path": "/tmp/jarvis_screenshot.png",
+               "data_url": "data:image/png;base64,AAAA"}
+        out = agent._tool_result_to_text("take_screenshot", img)
+        self.assertIn("/tmp/jarvis_screenshot.png", out)
+        self.assertIn("text-only", out)
+        # Crucially, no vision call was made.
+        self.assertEqual(agent._client.chat.completions.calls, 0)
+
+    def test_screenshot_with_vision_model_describes(self):
+        # A configured vision model gets a sub-call and its text is returned.
+        agent = Agent(_cfg(vision_model="vision-x"),
+                      client=_FakeClient([_resp(_msg(content="Safari is open on the desktop."))]))
+        img = {"type": "image", "path": "/tmp/jarvis_screenshot.png",
+               "data_url": "data:image/png;base64,AAAA"}
+        out = agent._tool_result_to_text("take_screenshot", img)
+        self.assertIn("Safari is open on the desktop.", out)
+        self.assertEqual(agent._client.chat.completions.calls, 1)
 
 
 if __name__ == "__main__":

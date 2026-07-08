@@ -1,4 +1,10 @@
-"""The agent: Anthropic API call + tool loop, with the safety gate wired in.
+"""The agent: OpenAI-compatible chat-completions call + tool loop, with the
+safety gate wired in.
+
+JARVIS is provider-agnostic: it talks to any OpenAI-compatible endpoint (Groq,
+Gemini's compat API, OpenAI itself, …) configured in ~/.jarvis/config.toml.
+Only the wire format lives here; tool implementations, the registry, and the
+safety gate are unchanged.
 
 Design seams for Tier 2 (voice):
   * Input  — `Agent.handle_request(text)` takes a plain string. A Whisper
@@ -9,7 +15,9 @@ Design seams for Tier 2 (voice):
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 
 from . import safety, ui
 from .config import Config
@@ -22,6 +30,9 @@ _MAX_HISTORY_MESSAGES = 20
 # Guard against a runaway tool loop within a single request.
 _MAX_TOOL_ITERATIONS = 8
 _MAX_TOKENS = 2048
+# Free tiers throttle; retry a few 429s with exponential backoff.
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 2.0  # seconds; delay = base * 2**attempt (unless Retry-After given)
 
 _OPERATIONAL_NOTE = (
     "\n\nYou are running as a macOS menu bar assistant. You have tools to inspect "
@@ -30,6 +41,26 @@ _OPERATIONAL_NOTE = (
     "trying to work around it. Keep simple answers short enough to read in a "
     "notification."
 )
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    """True if an exception is (or looks like) an HTTP 429."""
+    return getattr(exc, "status_code", None) == 429
+
+
+def _retry_after(exc: Exception) -> float | None:
+    """Seconds to wait per a Retry-After response header, if present."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class Agent:
@@ -45,9 +76,16 @@ class Agent:
             return
         try:
             answer = self._run(text)
-        except Exception as exc:  # never let a request crash the app
-            log.exception("request failed")
-            answer = f"Something went wrong, sir: {exc}"
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                log.warning("request rate-limited after %d retries", _MAX_RETRIES)
+                answer = (
+                    "We're being rate-limited by the provider, sir — give it a "
+                    "moment and ask again."
+                )
+            else:  # never let a request crash the app
+                log.exception("request failed")
+                answer = f"Something went wrong, sir: {exc}"
         ui.respond(answer)
 
     # -- internals ------------------------------------------------------------
@@ -56,62 +94,75 @@ class Agent:
             return self._client
         if not self.config.api_key:
             raise RuntimeError(
-                "no Anthropic API key. Set ANTHROPIC_API_KEY or add it to "
-                "~/.jarvis/config.toml."
+                "no API key. Add it to ~/.jarvis/config.toml under [provider], "
+                "or set JARVIS_API_KEY."
             )
-        import anthropic  # imported lazily so the app starts without the key
+        from openai import OpenAI  # imported lazily so the app starts without a key
 
-        self._client = anthropic.Anthropic(api_key=self.config.api_key)
+        self._client = OpenAI(
+            base_url=self.config.base_url,
+            api_key=self.config.api_key,
+        )
         return self._client
 
     def _system_prompt(self) -> str:
         return self.config.persona_text() + _OPERATIONAL_NOTE
 
-    def _run(self, user_text: str) -> str:
+    def _chat_create(self, model: str, messages: list[dict], tools=None):
+        """One chat-completions call, with 429 backoff (honours Retry-After)."""
         client = self._client_or_error()
+        kwargs: dict = {"model": model, "max_tokens": _MAX_TOKENS, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                return client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                if _is_rate_limit(exc) and attempt < _MAX_RETRIES:
+                    delay = _retry_after(exc)
+                    if delay is None:
+                        delay = _BACKOFF_BASE * (2 ** attempt)
+                    log.warning(
+                        "rate limited (attempt %d/%d); backing off %.1fs",
+                        attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+
+    def _run(self, user_text: str) -> str:
         system = self._system_prompt()
-        # Working message list = rolling history + this turn. Intermediate
-        # tool_use/tool_result blocks stay local and are NOT persisted to history
-        # (history holds only clean user/assistant text), which keeps follow-ups
-        # simple and avoids tool-pairing hazards.
-        messages = list(self._history) + [{"role": "user", "content": user_text}]
+        # Working message list = system + rolling history + this turn. Intermediate
+        # tool_call / tool-result messages stay local and are NOT persisted to
+        # history (history holds only clean user/assistant text), which keeps
+        # follow-ups simple and avoids tool-pairing hazards.
+        messages: list[dict] = (
+            [{"role": "system", "content": system}]
+            + list(self._history)
+            + [{"role": "user", "content": user_text}]
+        )
 
         final_text = ""
         for _ in range(_MAX_TOOL_ITERATIONS):
-            response = client.messages.create(
-                model=self.config.model,
-                max_tokens=_MAX_TOKENS,
-                system=system,
-                tools=registry.TOOL_DEFINITIONS,
-                messages=messages,
+            response = self._chat_create(
+                self.config.model, messages, tools=registry.openai_tools()
             )
+            msg = response.choices[0].message
+            tool_calls = getattr(msg, "tool_calls", None)
 
-            if response.stop_reason == "refusal":
-                final_text = "I can't help with that one, sir."
+            if msg.content:
+                final_text = msg.content.strip()
+
+            if not tool_calls:
                 break
 
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
-            text_blocks = [b.text for b in response.content if b.type == "text"]
-            if text_blocks:
-                final_text = "\n".join(text_blocks).strip()
-
-            if response.stop_reason != "tool_use" or not tool_uses:
-                break
-
-            # Preserve the assistant turn (incl. tool_use blocks) for the API.
-            messages.append({"role": "assistant", "content": response.content})
-
-            tool_results = []
-            for tu in tool_uses:
-                result_content = self._run_tool(tu.name, tu.input or {})
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tu.id,
-                        "content": result_content,
-                    }
+            # Preserve the assistant turn (incl. tool_calls) for the API.
+            messages.append(self._assistant_message(msg))
+            for tc in tool_calls:
+                result_text = self._handle_tool_call(tc)
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": result_text}
                 )
-            messages.append({"role": "user", "content": tool_results})
         else:
             log.warning("hit tool-iteration cap")
 
@@ -119,12 +170,92 @@ class Agent:
         self._remember(user_text, final_text)
         return final_text
 
-    def _run_tool(self, name: str, tool_input: dict):
-        """Apply the safety gate, then execute (or return a decline)."""
-        allowed, level = safety.gate(name, tool_input)
+    @staticmethod
+    def _assistant_message(msg) -> dict:
+        return {
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in msg.tool_calls
+            ],
+        }
+
+    def _handle_tool_call(self, tc) -> str:
+        """Parse args, apply the safety gate, execute, and return result text."""
+        name = tc.function.name
+        raw_args = tc.function.arguments
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args or "{}")
+            except json.JSONDecodeError:
+                return f"Error: could not parse arguments for {name}."
+        else:
+            args = raw_args or {}
+
+        allowed, level = safety.gate(name, args)
         if not allowed:
             return f"The user declined to approve this {level.value.lower()} action."
-        return registry.execute(name, tool_input)
+        raw = registry.execute(name, args)
+        return self._tool_result_to_text(name, raw)
+
+    def _tool_result_to_text(self, name: str, raw) -> str:
+        """Flatten a tool result to a string for a `role: tool` message.
+
+        Screenshots come back as an image dict; route them to a vision model if
+        one is configured, otherwise report cleanly that visual analysis isn't
+        available on a text-only provider.
+        """
+        if isinstance(raw, dict) and raw.get("type") == "image":
+            path = raw.get("path", "the screen")
+            if not self.config.vision_model:
+                return (
+                    f"Screenshot captured and saved to {path}, but visual analysis "
+                    "isn't available on the current provider — its model is "
+                    "text-only. Tell the user you captured the screen but can't "
+                    "describe it until a vision-capable model is configured."
+                )
+            try:
+                desc = self._describe_image(raw["data_url"])
+            except Exception as exc:
+                log.warning("vision call failed: %s", exc)
+                return f"Screenshot captured ({path}), but visual analysis failed: {exc}"
+            return f"Screenshot captured ({path}). What the screen shows:\n{desc}"
+
+        if isinstance(raw, list):  # legacy content-block form; flatten to text
+            texts = [b.get("text", "") for b in raw if isinstance(b, dict) and b.get("type") == "text"]
+            return "\n".join(t for t in texts if t) or "(no text content)"
+
+        return str(raw)
+
+    def _describe_image(self, data_url: str) -> str:
+        response = self._chat_create(
+            self.config.vision_model,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "This is a screenshot of the user's Mac screen. "
+                                "Describe what is visible — apps, windows, key text, "
+                                "and overall context. Be concise but specific."
+                            ),
+                        },
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+        )
+        return (response.choices[0].message.content or "").strip() or "(the vision model returned no description)"
 
     def _remember(self, user_text: str, assistant_text: str) -> None:
         self._history.append({"role": "user", "content": user_text})
