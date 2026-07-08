@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Reference LaunchAgent template. install.sh generates the real plist at
+  ~/Library/LaunchAgents/com.omkaar.jarvis.plist with these placeholders filled
+  in with absolute paths. Shown here for reference / manual installation.
+
+    __PYTHON__   -> <repo>/.venv/bin/python
+    __SRC__      -> <repo>/src
+    __JARVIS__   -> $HOME/.jarvis
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.omkaar.jarvis</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-m</string>
+        <string>jarvis.main</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>__SRC__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>__JARVIS__/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__JARVIS__/stderr.log</string>
+</dict>
+</plist>

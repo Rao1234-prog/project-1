@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# jarvis — control the JARVIS LaunchAgent.
+# Usage: jarvis {start|stop|restart|logs|status}
+set -euo pipefail
+
+LABEL="com.omkaar.jarvis"
+PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+JARVIS_DIR="$HOME/.jarvis"
+
+usage() {
+  echo "Usage: jarvis {start|stop|restart|logs|status}"
+  exit 1
+}
+
+require_plist() {
+  if [ ! -f "$PLIST" ]; then
+    echo "LaunchAgent not installed ($PLIST missing). Run install.sh first." >&2
+    exit 1
+  fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  start)
+    require_plist
+    launchctl load "$PLIST" 2>/dev/null || true
+    launchctl start "$LABEL"
+    echo "Started $LABEL."
+    ;;
+  stop)
+    require_plist
+    launchctl stop "$LABEL" 2>/dev/null || true
+    launchctl unload "$PLIST" 2>/dev/null || true
+    echo "Stopped $LABEL."
+    ;;
+  restart)
+    require_plist
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST"
+    launchctl start "$LABEL"
+    echo "Restarted $LABEL."
+    ;;
+  logs)
+    echo "== action log ($JARVIS_DIR/actions.log) =="
+    tail -n 40 "$JARVIS_DIR/actions.log" 2>/dev/null || echo "(none yet)"
+    echo
+    echo "== app log ($JARVIS_DIR/jarvis.log) =="
+    tail -n 40 "$JARVIS_DIR/jarvis.log" 2>/dev/null || echo "(none yet)"
+    echo
+    echo "== stderr ($JARVIS_DIR/stderr.log) =="
+    tail -n 20 "$JARVIS_DIR/stderr.log" 2>/dev/null || echo "(none yet)"
+    ;;
+  status)
+    if launchctl list | grep -q "$LABEL"; then
+      echo "JARVIS is loaded:"
+      launchctl list | grep "$LABEL" || true
+    else
+      echo "JARVIS is not loaded."
+    fi
+    ;;
+  *)
+    usage
+    ;;
+esac
